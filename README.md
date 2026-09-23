@@ -1,5 +1,7 @@
 # Liki
 
+![Liki: AndroidスマホをBluetoothキーボードとトラックパッドに](artwork/play/feature-graphic-1024x500.png)
+
 Pocket HIDとしてAndroidスマホをBluetooth HIDのキーボード兼マウスにするアプリです。PCへの常駐ソフトは不要です。
 
 ## 動作条件
