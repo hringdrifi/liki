@@ -174,7 +174,8 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
-    private fun showPage(connected: Boolean) {
+    private fun showPage(connected: Boolean, preserveKeyboardViewState: Boolean = true) {
+        if (preserveKeyboardViewState) keyboardView?.let { keyboardViewState = it.viewState() }
         showingControls = connected
         settingsVisible = false
         devices = null; connectionButton = null; keyboardView = null; layerIndicator = null
@@ -827,7 +828,7 @@ class MainActivity : Activity() {
         keyboardViewState = null
         preferences.edit().putString("kle_json", json).putString("overrides", "{}")
             .putString("layer_overrides", "{}").apply()
-        showPage(hid.isConnected())
+        showPage(hid.isConnected(), preserveKeyboardViewState = false)
         toast("${parsed.keys.size}キーのレイアウトを読み込みました")
     }
 
