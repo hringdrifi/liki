@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.text.InputType
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.Typeface
@@ -23,6 +24,7 @@ import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CompoundButton
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -51,6 +53,7 @@ class MainActivity : Activity() {
     private lateinit var hid: HidController
     private lateinit var settings: AppSettings
     private lateinit var preferences: SharedPreferences
+    private lateinit var savedLayouts: SavedLayoutStore
     private var statusView: TextView? = null
     private var devices: Spinner? = null
     private var connectionButton: Button? = null
@@ -65,6 +68,8 @@ class MainActivity : Activity() {
     private var reconnectAttempted = false
     private var statusText = "準備中…"
     private lateinit var layout: KleLayout
+    private lateinit var currentKleJson: String
+    private var selectedSavedLayoutName: String? = null
     private var overrides = JSONObject()
     private var layerOverrides = JSONObject()
     private var activeLayer = 0
@@ -87,6 +92,7 @@ class MainActivity : Activity() {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         preferences = getSharedPreferences("layout", MODE_PRIVATE)
+        savedLayouts = SavedLayoutStore(preferences)
         settings = AppSettings(this)
         applyKeepScreenOn()
         reconnectAddress = state?.getString("reconnect_address")
@@ -334,7 +340,9 @@ class MainActivity : Activity() {
             it.setPadding(0, dp(8), 0, dp(4))
             panel.addView(it)
         }
-        panel.addView(label(layout.name, 13, false).apply { setTextColor(AppColors.MUTED) })
+        panel.addView(label(selectedSavedLayoutName ?: layout.name, 13, false).apply {
+            setTextColor(AppColors.MUTED)
+        })
         val actions = column()
         val actionScroll = ScrollView(this).apply {
             addView(actions)
@@ -753,22 +761,26 @@ class MainActivity : Activity() {
     private fun loadLayout() {
         var json = preferences.getString("kle_json", null)
         try {
+            selectedSavedLayoutName = preferences.getString("selected_saved_layout_name", null)
             if (json == null) json = assets.open("default-kle.json").use(::readText)
-            else {
+            else if (selectedSavedLayoutName == null) {
                 val upgraded = upgradeBundledLayout(json)
                 if (upgraded != json) {
                     json = upgraded
                     preferences.edit().putString("kle_json", upgraded).apply()
                 }
             }
-            layout = KleLayout.parse(requireNotNull(json))
+            currentKleJson = requireNotNull(json)
+            layout = KleLayout.parse(currentKleJson)
             overrides = JSONObject(preferences.getString("overrides", "{}") ?: "{}")
             layerOverrides = JSONObject(preferences.getString("layer_overrides", "{}") ?: "{}")
         } catch (_: Exception) {
             try {
-                layout = KleLayout.parse(assets.open("default-kle.json").use(::readText))
+                currentKleJson = assets.open("default-kle.json").use(::readText)
+                layout = KleLayout.parse(currentKleJson)
                 overrides = JSONObject()
                 layerOverrides = JSONObject()
+                selectedSavedLayoutName = null
             } catch (error: Exception) { throw IllegalStateException("標準レイアウトを読めません", error) }
         }
     }
@@ -794,10 +806,116 @@ class MainActivity : Activity() {
     }
 
     private fun chooseLayout() {
+        val saved = savedLayouts.all()
+        val options = mutableListOf("標準トラックパッド", "標準キーボード（TKL）")
+        saved.forEach { options.add("保存: ${it.name}") }
+        val importIndex = options.size
+        options.add("KLE JSONファイルを開く")
+        val saveIndex = options.size
+        options.add("現在のレイアウトに名前を付けて保存")
+        val deleteIndex = options.size
+        options.add("保存したレイアウトを削除")
         AlertDialog.Builder(this).setTitle("レイアウトを選択")
-            .setItems(arrayOf("標準トラックパッド", "標準キーボード（TKL）", "KLE JSONファイルを開く")) { _, which ->
-                if (which == 2) openKlePicker()
-                else loadBundled(if (which == 0) "ghosted-trackpad.json" else "default-kle.json")
+            .setItems(options.toTypedArray()) { _, which ->
+                when (which) {
+                    0 -> loadBundled("ghosted-trackpad.json")
+                    1 -> loadBundled("default-kle.json")
+                    in 2 until importIndex -> restoreSavedLayout(saved[which - 2])
+                    importIndex -> openKlePicker()
+                    saveIndex -> promptSaveLayout()
+                    deleteIndex -> chooseSavedLayoutToDelete()
+                }
+            }
+            .setNegativeButton("閉じる", null).show()
+    }
+
+    private fun promptSaveLayout() {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            isSingleLine = true
+            setText(selectedSavedLayoutName ?: "")
+            selectAll()
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("レイアウトに名前を付けて保存")
+            .setView(input)
+            .setPositiveButton("保存", null)
+            .setNegativeButton("キャンセル", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val name = input.text.toString().trim()
+                if (name.isEmpty() || name.length > 40) {
+                    input.error = "名前は1〜40文字で入力してください"
+                    return@setOnClickListener
+                }
+                val existing = savedLayouts.all().firstOrNull { it.name.equals(name, ignoreCase = true) }
+                if (existing == null) {
+                    saveCurrentLayout(name)
+                    dialog.dismiss()
+                } else {
+                    AlertDialog.Builder(this).setTitle("「${existing.name}」を上書きしますか？")
+                        .setPositiveButton("上書き") { _, _ ->
+                            saveCurrentLayout(name)
+                            dialog.dismiss()
+                        }
+                        .setNegativeButton("キャンセル", null).show()
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun saveCurrentLayout(name: String) {
+        val viewState = keyboardView?.viewState() ?: keyboardViewState
+            ?: KleKeyboardView.ViewState(1f, 0f, 0f)
+        savedLayouts.save(SavedLayout(name, currentKleJson, overrides.toString(),
+            layerOverrides.toString(), viewState))
+        selectedSavedLayoutName = name
+        preferences.edit().putString("selected_saved_layout_name", name).apply()
+        showPage(hid.isConnected())
+        toast("「$name」を保存しました")
+    }
+
+    private fun restoreSavedLayout(saved: SavedLayout) {
+        try {
+            val parsed = KleLayout.parse(saved.kleJson)
+            val base = JSONObject(saved.overrides)
+            val layers = JSONObject(saved.layerOverrides)
+            layout = parsed; overrides = base; layerOverrides = layers
+            currentKleJson = saved.kleJson
+            modifiers = 0; activeLayer = 0; activeLayerKeyIndex = null
+            oneShotReturnLayer = null; oneShotReturnKeyIndex = null
+            momentaryPreviousLayer = null; momentaryPreviousKeyIndex = null; momentaryTargetLayer = null
+            keyboardViewState = saved.viewState
+            selectedSavedLayoutName = saved.name
+            settings.clearAutoKeyScalePx()
+            preferences.edit().putString("kle_json", saved.kleJson)
+                .putString("overrides", saved.overrides)
+                .putString("layer_overrides", saved.layerOverrides)
+                .putString("selected_saved_layout_name", saved.name).apply()
+            showPage(hid.isConnected(), preserveKeyboardViewState = false)
+            toast("「${saved.name}」を読み込みました")
+        } catch (error: Exception) { toast("保存したレイアウトを読めません: ${error.message}") }
+    }
+
+    private fun chooseSavedLayoutToDelete() {
+        val saved = savedLayouts.all()
+        if (saved.isEmpty()) { toast("保存したレイアウトはありません"); return }
+        AlertDialog.Builder(this).setTitle("保存したレイアウトを削除")
+            .setItems(saved.map { it.name }.toTypedArray()) { _, which ->
+                val selected = saved[which]
+                AlertDialog.Builder(this).setTitle("「${selected.name}」を削除しますか？")
+                    .setMessage("現在の画面はそのまま残ります。")
+                    .setPositiveButton("削除") { _, _ ->
+                        savedLayouts.delete(selected.name)
+                        if (selectedSavedLayoutName?.equals(selected.name, ignoreCase = true) == true) {
+                            selectedSavedLayoutName = null
+                            preferences.edit().remove("selected_saved_layout_name").apply()
+                            showPage(hid.isConnected())
+                        }
+                        toast("「${selected.name}」を削除しました")
+                    }
+                    .setNegativeButton("キャンセル", null).show()
             }
             .setNegativeButton("閉じる", null).show()
     }
@@ -821,13 +939,15 @@ class MainActivity : Activity() {
     private fun applyLayout(json: String) {
         val parsed = KleLayout.parse(json)
         layout = parsed; overrides = JSONObject(); layerOverrides = JSONObject()
+        currentKleJson = json
+        selectedSavedLayoutName = null
         modifiers = 0; activeLayer = 0; activeLayerKeyIndex = null
         oneShotReturnLayer = null; oneShotReturnKeyIndex = null
         momentaryPreviousLayer = null; momentaryPreviousKeyIndex = null; momentaryTargetLayer = null
         settings.clearAutoKeyScalePx()
         keyboardViewState = null
         preferences.edit().putString("kle_json", json).putString("overrides", "{}")
-            .putString("layer_overrides", "{}").apply()
+            .putString("layer_overrides", "{}").remove("selected_saved_layout_name").apply()
         showPage(hid.isConnected(), preserveKeyboardViewState = false)
         toast("${parsed.keys.size}キーのレイアウトを読み込みました")
     }
