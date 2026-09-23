@@ -5,3 +5,5 @@ build/
 app/build/
 local.properties
 *.iml
+/docs/play-listing-ja.md
+/docs/play-release.md

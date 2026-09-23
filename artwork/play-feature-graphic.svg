@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="500" viewBox="0 0 1024 500">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#1F2834"/>
+      <stop offset="1" stop-color="#10151C"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#263844"/>
+      <stop offset="1" stop-color="#1C2935"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="500" fill="url(#bg)"/>
+  <circle cx="770" cy="190" r="275" fill="#80CBC4" opacity=".045"/>
+  <circle cx="930" cy="450" r="240" fill="#80CBC4" opacity=".035"/>
+  <text x="82" y="188" fill="#FFFFFF" font-family="Arial,sans-serif" font-weight="700" font-size="100">Liki</text>
+  <rect x="84" y="212" width="94" height="7" rx="3.5" fill="#80CBC4"/>
+  <text x="82" y="280" fill="#D8E5EA" font-family="Arial,sans-serif" font-size="26">Your phone, your keyboard.</text>
+  <text x="82" y="318" fill="#D8E5EA" font-family="Arial,sans-serif" font-size="26">Your trackpad.</text>
+  <text x="82" y="398" fill="#80CBC4" font-family="Arial,sans-serif" font-size="22" letter-spacing="2">BLUETOOTH HID</text>
+  <rect x="580" y="62" width="245" height="382" rx="38" fill="#0A0F15" stroke="#648A91" stroke-width="5"/>
+  <rect x="596" y="93" width="213" height="319" rx="15" fill="url(#screen)"/>
+  <rect x="668" y="75" width="70" height="7" rx="3.5" fill="#40535F"/>
+  <rect x="612" y="115" width="181" height="190" rx="12" fill="#334A56"/>
+  <path d="M644 150v92m0-92 72 66m-72-66 88 13" fill="none" stroke="#80CBC4" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity=".82"/>
+  <g fill="#D8E5EA">
+    <rect x="613" y="321" width="38" height="29" rx="5"/><rect x="660" y="321" width="38" height="29" rx="5"/><rect x="707" y="321" width="38" height="29" rx="5"/><rect x="754" y="321" width="38" height="29" rx="5"/>
+    <rect x="613" y="359" width="38" height="29" rx="5"/><rect x="660" y="359" width="85" height="29" rx="5"/><rect x="754" y="359" width="38" height="29" rx="5"/>
+  </g>
+  <path d="M853 251c35-36 66-36 100 0m-84 17c24-24 46-24 69 0m-54 17c15-14 27-14 40 0" fill="none" stroke="#80CBC4" stroke-width="7" stroke-linecap="round" opacity=".8"/>
+</svg>

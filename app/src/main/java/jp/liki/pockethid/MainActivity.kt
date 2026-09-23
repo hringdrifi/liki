@@ -20,7 +20,10 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.WindowManager
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CompoundButton
@@ -88,6 +91,7 @@ class MainActivity : Activity() {
     private var keyboardView: KleKeyboardView? = null
     private var keyboardViewState: KleKeyboardView.ViewState? = null
     private var modifiers = 0
+    private var backCallback: OnBackInvokedCallback? = null
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -129,6 +133,13 @@ class MainActivity : Activity() {
             }
         }
         showPage(false)
+        if (Build.VERSION.SDK_INT >= 33) {
+            backCallback = OnBackInvokedCallback {
+                if (!handleBack()) finish()
+            }.also {
+                onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, it)
+            }
+        }
         ensureReady()
     }
 
@@ -176,6 +187,9 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= 33) backCallback?.let {
+            onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it)
+        }
         if (::hid.isInitialized) hid.close()
         super.onDestroy()
     }
@@ -198,7 +212,7 @@ class MainActivity : Activity() {
         }
         val root = column().apply { setPadding(dp(20), dp(24), dp(20), dp(24)) }
         scroll.addView(root)
-        setContentView(scroll)
+        setInsetContentView(scroll)
         root.addView(label("Liki", 36, true))
         root.addView(label("Pocket HID", 15, true).apply { setTextColor(AppColors.ACCENT) })
         root.addView(label("スマホをPCのキーボード・トラックパッドに", 14, false))
@@ -229,12 +243,13 @@ class MainActivity : Activity() {
         root.addView(label("接続すると操作画面へ切り替わります。PCから自動接続される場合もあります。", 13, false).apply {
             setPadding(0, dp(12), 0, 0)
         })
+        root.addView(button("プライバシーポリシー") { showPrivacyPolicy() })
         refreshDevices()
     }
 
     private fun showControls() {
         val root = FrameLayout(this).apply { setBackgroundColor(AppColors.BACKGROUND) }
-        setContentView(root)
+        setInsetContentView(root)
         val content = column().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
         root.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         val keyboard = KleKeyboardView(this, hid, settings, object : KleKeyboardView.Listener {
@@ -394,12 +409,13 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this).apply { setBackgroundColor(AppColors.BACKGROUND) }
         val root = column().apply { setPadding(dp(20), dp(16), dp(20), dp(28)) }
         scroll.addView(root)
-        setContentView(scroll)
+        setInsetContentView(scroll)
         root.addView(button("‹  操作画面に戻る") { showPage(hid.isConnected()) })
         root.addView(label("設定", 28, true).apply { setPadding(0, dp(20), 0, dp(4)) })
         root.addView(label("操作方法を切り替えます。変更はすぐに保存されます。", 14, false).apply {
             setTextColor(AppColors.MUTED)
         })
+        root.addView(button("プライバシーポリシー") { showPrivacyPolicy() })
         root.addView(section("表示"))
         addOrientationSetting(root)
         addSetting(root, "画面を常にON", "Likiを開いている間は自動消灯しない", settings.keepScreenOn()) { _, enabled ->
@@ -574,12 +590,17 @@ class MainActivity : Activity() {
         root.addView(item)
     }
 
-    @Deprecated("Use the system back dispatcher when moving to AndroidX")
+    @Deprecated("Used by Android versions before predictive back")
     override fun onBackPressed() {
+        if (!handleBack()) super.onBackPressed()
+    }
+
+    private fun handleBack(): Boolean {
         if (menuPanel?.visibility == View.VISIBLE) setMenuOpen(false)
         else if (bindingEditMode) cancelBindingEdit()
         else if (settingsVisible) showPage(hid.isConnected())
-        else super.onBackPressed()
+        else return false
+        return true
     }
 
     private fun handleKey(key: KleLayout.Key, layer: Int = activeLayer) {
@@ -1061,6 +1082,27 @@ class MainActivity : Activity() {
     }
 
     private fun column(): LinearLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+    private fun showPrivacyPolicy() {
+        AlertDialog.Builder(this)
+            .setTitle("プライバシーポリシー")
+            .setMessage(getString(R.string.privacy_policy_text))
+            .setPositiveButton("閉じる", null)
+            .show()
+    }
+    private fun setInsetContentView(view: View) {
+        if (Build.VERSION.SDK_INT >= 35) {
+            val left = view.paddingLeft
+            val top = view.paddingTop
+            val right = view.paddingRight
+            val bottom = view.paddingBottom
+            view.setOnApplyWindowInsetsListener { content, insets ->
+                val safe = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                content.setPadding(left + safe.left, top + safe.top, right + safe.right, bottom + safe.bottom)
+                insets
+            }
+        }
+        setContentView(view)
+    }
     private fun horizontal(): LinearLayout = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
     private fun section(text: String): TextView = label(text, 20, true).apply { setPadding(0, dp(24), 0, dp(8)) }
     private fun label(text: String, size: Int, bold: Boolean): TextView = TextView(this).apply {

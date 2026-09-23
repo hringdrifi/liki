@@ -44,7 +44,7 @@ KLEはキーの表示・配置形式であり、HIDコードを直接指定し�
 
 ## ビルド
 
-Android Studioでこのディレクトリを開き、Android SDK Platform 34を導入して `app` をビルドします。コマンドラインでは `./gradlew assembleDebug`（Windowsは `gradlew.bat assembleDebug`）です。生成されるAPKは `app/build/outputs/apk/debug/app-debug.apk` です。
+Android Studioでこのディレクトリを開き、Android SDK Platform 36を導入して `app` をビルドします。コマンドラインでは `./gradlew assembleDebug`（Windowsは `gradlew.bat assembleDebug`）です。生成されるAPKは `app/build/outputs/apk/debug/app-debug.apk` です。
 
 Android 12以降ではBluetooth接続・公開の実行時権限を要求します。探索権限や位置情報権限は不要です。
 

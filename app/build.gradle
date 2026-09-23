@@ -11,12 +11,12 @@ kotlin {
 
 android {
     namespace 'jp.liki.pockethid'
-    compileSdk 34
+    compileSdk 36
 
     defaultConfig {
         applicationId 'jp.liki.pockethid'
         minSdk 28
-        targetSdk 34
+        targetSdk 36
         versionCode 1
         versionName '1.0'
     }
