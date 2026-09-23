@@ -334,16 +334,22 @@ class MainActivity : Activity() {
             panel.addView(it)
         }
         panel.addView(label(layout.name, 13, false).apply { setTextColor(AppColors.MUTED) })
-        panel.addView(menuAction("キー割り当てを編集") { setMenuOpen(false); beginBindingEdit() })
-        panel.addView(menuAction("レイアウトを選択") { setMenuOpen(false); chooseLayout() })
-        panel.addView(menuAction("表示をリセット") {
+        val actions = column()
+        val actionScroll = ScrollView(this).apply {
+            addView(actions)
+        }
+        panel.addView(actionScroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        actions.addView(menuAction("キー割り当てを編集") { setMenuOpen(false); beginBindingEdit() })
+        actions.addView(menuAction("レイアウトを選択") { setMenuOpen(false); chooseLayout() })
+        actions.addView(menuAction("表示をリセット") {
             setMenuOpen(false)
             settings.setKeyPitchMm(0f)
             settings.clearAutoKeyScalePx()
             keyboard.resetZoom()
         })
-        panel.addView(menuAction("設定") { showSettings() })
-        panel.addView(menuAction("切断") {
+        actions.addView(menuAction("設定") { showSettings() })
+        actions.addView(menuAction("切断") {
             setMenuOpen(false)
             reconnectAddress = null
             reconnectAttempted = false
@@ -351,7 +357,11 @@ class MainActivity : Activity() {
         })
         panel.visibility = View.GONE
         val menuParams = FrameLayout.LayoutParams(dp(216), ViewGroup.LayoutParams.WRAP_CONTENT,
-            Gravity.END or Gravity.CENTER_VERTICAL).apply { rightMargin = dp(12) }
+            Gravity.END or Gravity.CENTER_VERTICAL).apply {
+            rightMargin = dp(12)
+            topMargin = dp(12)
+            bottomMargin = dp(12)
+        }
         root.addView(panel, menuParams)
     }
 
