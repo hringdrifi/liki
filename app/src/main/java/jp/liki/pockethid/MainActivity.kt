@@ -1,0 +1,690 @@
+package jp.liki.pockethid
+
+import android.Manifest
+import android.app.Activity
+import android.app.AlertDialog
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.content.Intent
+import android.content.SharedPreferences
+import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.Rect
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.os.Build
+import android.os.Bundle
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.CompoundButton
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.Spinner
+import android.widget.Switch
+import android.widget.TextView
+import android.widget.Toast
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.nio.charset.StandardCharsets
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
+
+class MainActivity : Activity() {
+    private companion object {
+        const val REQUEST_CONNECT = 1
+        const val REQUEST_ENABLE = 2
+        const val REQUEST_ADVERTISE = 3
+        const val REQUEST_DISCOVERABLE = 4
+        const val REQUEST_KLE = 5
+    }
+
+    private lateinit var hid: HidController
+    private lateinit var settings: AppSettings
+    private lateinit var preferences: SharedPreferences
+    private var statusView: TextView? = null
+    private var devices: Spinner? = null
+    private var connectionButton: Button? = null
+    private var menuHandle: View? = null
+    private var menuScrim: View? = null
+    private var menuPanel: LinearLayout? = null
+    private val paired = mutableListOf<BluetoothDevice>()
+    private var showingControls = false
+    private var settingsVisible = false
+    private var activityVisible = false
+    private var reconnectAddress: String? = null
+    private var reconnectAttempted = false
+    private var statusText = "準備中…"
+    private lateinit var layout: KleLayout
+    private var overrides = JSONObject()
+    private var keyboardView: KleKeyboardView? = null
+    private var keyboardViewState: KleKeyboardView.ViewState? = null
+    private var modifiers = 0
+
+    override fun onCreate(state: Bundle?) {
+        super.onCreate(state)
+        preferences = getSharedPreferences("layout", MODE_PRIVATE)
+        settings = AppSettings(this)
+        applyKeepScreenOn()
+        reconnectAddress = state?.getString("reconnect_address")
+        if (state?.containsKey("keyboard_zoom") == true) {
+            keyboardViewState = KleKeyboardView.ViewState(
+                state.getFloat("keyboard_zoom"), state.getFloat("keyboard_pan_x"), state.getFloat("keyboard_pan_y"))
+        }
+        applyScreenOrientation()
+        loadLayout()
+        hid = HidController(this, settings) { message, connected ->
+            runOnUiThread {
+                if (connected != hid.isConnected()) return@runOnUiThread
+                val address = if (connected) hid.connectedAddress() else null
+                if (address != null) RecentDevice.remember(preferences, address)
+                if (connected) { reconnectAddress = null; reconnectAttempted = false }
+                statusText = message
+                maybeReconnect()
+                if (connected != showingControls && !restoringConnection()) showPage(connected)
+                else updateStatus()
+            }
+        }
+        showPage(false)
+        ensureReady()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        activityVisible = true
+        if (::hid.isInitialized && hid.isBluetoothReady()) {
+            hid.start()
+            if (hid.isConnected()) { reconnectAddress = null; reconnectAttempted = false }
+            maybeReconnect()
+            if (hid.isConnected() != showingControls && !restoringConnection()) showPage(hid.isConnected())
+            else updateStatus()
+            refreshDevices()
+        }
+    }
+
+    override fun onPause() {
+        if (::hid.isInitialized) reconnectAddress = hid.connectedAddress() ?: reconnectAddress
+        reconnectAttempted = false
+        activityVisible = false
+        super.onPause()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("reconnect_address", reconnectAddress ?: hid.connectedAddress())
+        (keyboardView?.viewState() ?: keyboardViewState)?.let {
+            outState.putFloat("keyboard_zoom", it.zoom)
+            outState.putFloat("keyboard_pan_x", it.panX)
+            outState.putFloat("keyboard_pan_y", it.panY)
+        }
+        super.onSaveInstanceState(outState)
+    }
+
+    override fun onDestroy() {
+        if (::hid.isInitialized) hid.close()
+        super.onDestroy()
+    }
+
+    private fun showPage(connected: Boolean) {
+        showingControls = connected
+        settingsVisible = false
+        devices = null; connectionButton = null; keyboardView = null
+        menuHandle = null; menuScrim = null; menuPanel = null
+        if (connected) showControls() else showConnection()
+        updateStatus()
+    }
+
+    private fun showConnection() {
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            setBackgroundColor(AppColors.BACKGROUND)
+        }
+        val root = column().apply { setPadding(dp(20), dp(24), dp(20), dp(24)) }
+        scroll.addView(root)
+        setContentView(scroll)
+        root.addView(label("Liki", 36, true))
+        root.addView(label("Pocket HID", 15, true).apply { setTextColor(AppColors.ACCENT) })
+        root.addView(label("スマホをPCのキーボード・トラックパッドに", 14, false))
+        statusView = label(statusText, 15, true).also {
+            it.setPadding(0, dp(26), 0, dp(24))
+            root.addView(it)
+        }
+        root.addView(section("1. PCとペアリング"))
+        root.addView(label("下のボタンを押した後、PCのBluetooth設定からこのスマホを追加します。", 14, false))
+        root.addView(button("ペアリング待機（5分間公開）") { requestDiscoverable() },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)))
+        root.addView(section("2. 接続先を選択"))
+        val row = horizontal()
+        val spinner = Spinner(this)
+        devices = spinner
+        row.addView(spinner, LinearLayout.LayoutParams(0, dp(52), 1f))
+        row.addView(button("更新") { refreshDevices() })
+        root.addView(row)
+        val connectButton = button("選択したPCに接続") {
+            if (hid.isConnecting()) hid.cancelConnection()
+            else {
+                val index = spinner.selectedItemPosition
+                hid.connect(paired.getOrNull(index))
+            }
+        }
+        connectionButton = connectButton
+        root.addView(connectButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)))
+        root.addView(label("接続すると操作画面へ切り替わります。PCから自動接続される場合もあります。", 13, false).apply {
+            setPadding(0, dp(12), 0, 0)
+        })
+        refreshDevices()
+    }
+
+    private fun showControls() {
+        val root = FrameLayout(this).apply { setBackgroundColor(AppColors.BACKGROUND) }
+        setContentView(root)
+        val content = column().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
+        root.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val keyboard = KleKeyboardView(this, hid, settings, object : KleKeyboardView.Listener {
+            override fun bindingFor(key: KleLayout.Key): KeyBinding? = this@MainActivity.bindingFor(key)
+            override fun onKeyTap(key: KleLayout.Key) = handleKey(key)
+            override fun onKeyLongPress(key: KleLayout.Key) = editBinding(key)
+        })
+        keyboardView = keyboard
+        keyboard.setLayout(layout)
+        keyboardViewState?.let { keyboard.restoreViewState(it) }
+        keyboardViewState = null
+        keyboard.setActiveModifiers(modifiers)
+        content.addView(keyboard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        val edgeZone = FrameLayout(this)
+        edgeZone.contentDescription = "右端中央から左へスワイプしてメニューを開く"
+        val indicatorBackground = GradientDrawable().apply {
+            setColor(AppColors.ACCENT)
+            cornerRadius = dp(2).toFloat()
+        }
+        val indicatorParams = FrameLayout.LayoutParams(dp(3), dp(48), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+            rightMargin = dp(2)
+        }
+        edgeZone.addView(View(this).apply { background = indicatorBackground }, indicatorParams)
+        var swipeX = 0f; var swipeY = 0f
+        edgeZone.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { swipeX = event.rawX; swipeY = event.rawY }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - swipeX; val dy = event.rawY - swipeY
+                    if (dx < -dp(42) && abs(dx) > abs(dy) * 1.25f) setMenuOpen(true)
+                }
+            }
+            true
+        }
+        edgeZone.setOnClickListener { setMenuOpen(true) } // Accessibility action; touch taps are consumed above.
+        menuHandle = edgeZone
+        root.addView(edgeZone, FrameLayout.LayoutParams(dp(24), dp(108), Gravity.END or Gravity.CENTER_VERTICAL))
+        if (Build.VERSION.SDK_INT >= 29) root.post {
+            val top = (root.height - dp(108)) / 2
+            root.systemGestureExclusionRects = listOf(Rect(root.width - dp(24), top, root.width, top + dp(108)))
+        }
+
+        val scrim = View(this).apply {
+            setBackgroundColor(Color.argb(150, 0, 0, 0))
+            setOnClickListener { setMenuOpen(false) }
+            visibility = View.GONE
+        }
+        menuScrim = scrim
+        root.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        val panel = column().apply { setPadding(dp(12), dp(16), dp(12), dp(12)) }
+        menuPanel = panel
+        panel.background = GradientDrawable().apply {
+            setColor(AppColors.SURFACE)
+            cornerRadius = dp(18).toFloat()
+        }
+        panel.elevation = dp(12).toFloat()
+        panel.addView(label("Liki", 22, true))
+        statusView = label(statusText, 13, false).also {
+            it.setPadding(0, dp(8), 0, dp(4))
+            panel.addView(it)
+        }
+        panel.addView(label(layout.name, 13, false).apply { setTextColor(AppColors.MUTED) })
+        panel.addView(menuAction("レイアウトを選択") { setMenuOpen(false); chooseLayout() })
+        panel.addView(menuAction("表示をリセット") {
+            setMenuOpen(false)
+            settings.setKeyPitchMm(0f)
+            settings.clearAutoKeyScalePx()
+            keyboard.resetZoom()
+        })
+        panel.addView(menuAction("設定") { showSettings() })
+        panel.addView(menuAction("切断") {
+            setMenuOpen(false)
+            reconnectAddress = null
+            reconnectAttempted = false
+            hid.disconnect()
+        })
+        panel.visibility = View.GONE
+        val menuParams = FrameLayout.LayoutParams(dp(216), ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.END or Gravity.CENTER_VERTICAL).apply { rightMargin = dp(12) }
+        root.addView(panel, menuParams)
+    }
+
+    private fun menuAction(text: String, action: View.OnClickListener): Button = button(text, action).apply {
+        gravity = Gravity.CENTER_VERTICAL or Gravity.START
+        minHeight = dp(48)
+    }
+
+    private fun setMenuOpen(open: Boolean) {
+        val panel = menuPanel ?: return
+        menuHandle?.visibility = if (open) View.GONE else View.VISIBLE
+        menuScrim?.visibility = if (open) View.VISIBLE else View.GONE
+        panel.visibility = if (open) View.VISIBLE else View.GONE
+    }
+
+    private fun showSettings() {
+        val currentPitchMm = keyboardView?.currentPitchMm() ?: 0f
+        keyboardViewState = keyboardView?.viewState()
+        settingsVisible = true
+        keyboardView = null; menuHandle = null; menuScrim = null; menuPanel = null; statusView = null
+        val scroll = ScrollView(this).apply { setBackgroundColor(AppColors.BACKGROUND) }
+        val root = column().apply { setPadding(dp(20), dp(16), dp(20), dp(28)) }
+        scroll.addView(root)
+        setContentView(scroll)
+        root.addView(button("‹  操作画面に戻る") { showPage(hid.isConnected()) })
+        root.addView(label("設定", 28, true).apply { setPadding(0, dp(20), 0, dp(4)) })
+        root.addView(label("操作方法を切り替えます。変更はすぐに保存されます。", 14, false).apply {
+            setTextColor(AppColors.MUTED)
+        })
+        root.addView(section("表示"))
+        addOrientationSetting(root)
+        addSetting(root, "画面を常にON", "Likiを開いている間は自動消灯しない", settings.keepScreenOn()) { _, enabled ->
+            settings.setKeepScreenOn(enabled)
+            applyKeepScreenOn()
+        }
+        root.addView(section("操作感"))
+        addSetting(root, "タッチ時に振動", "キーのタップとトラックパッドのクリック時に振動", settings.touchVibration()) { _, enabled ->
+            settings.setTouchVibration(enabled)
+        }
+        root.addView(section("キーボード"))
+        addPitchSetting(root, currentPitchMm)
+        addSetting(root, "修飾キーを保持", "Ctrl・Shiftなどを次のキー入力まで保持", settings.stickyModifiers()) { _, enabled ->
+            settings.setStickyModifiers(enabled)
+            if (!enabled) modifiers = 0
+        }
+        addSetting(root, "長押しでキー割り当て", "キーを長押ししてHIDキーを変更", settings.longPressBinding()) { _, enabled ->
+            settings.setLongPressBinding(enabled)
+        }
+        addSetting(root, "ピンチで拡大縮小", "2本指でキーボードの表示倍率を変更", settings.pinchZoom()) { _, enabled ->
+            settings.setPinchZoom(enabled)
+        }
+        addSetting(root, "ドラッグでキーボードを移動", "通常キーの上を1本指で動かして表示位置を変更", settings.dragMoveKeyboard()) { _, enabled ->
+            settings.setDragMoveKeyboard(enabled)
+        }
+        root.addView(section("トラックパッド"))
+        addSpeedSetting(root, "ポインターの速度", settings.pointerSpeed(), settings::setPointerSpeed)
+        addPointerSendModeSetting(root)
+        addSetting(root, "タップでクリック", "1本指でタップして左クリック", settings.tapToClick()) { _, enabled ->
+            settings.setTapToClick(enabled)
+        }
+        addSetting(root, "ダブルタップでドラッグ", "タップでクリックを有効にして、2回目のタップ後に指を動かす", settings.tapDrag()) { _, enabled ->
+            settings.setTapDrag(enabled)
+        }
+        addSetting(root, "長押しでドラッグ", "1本指で押し続けてドラッグ", settings.holdToDrag()) { _, enabled ->
+            settings.setHoldToDrag(enabled)
+        }
+        addSetting(root, "2本指タップで右クリック", "動かさずに2本指でタップ", settings.twoFingerRightClick()) { _, enabled ->
+            settings.setTwoFingerRightClick(enabled)
+        }
+        addSetting(root, "2本指でスクロール", "トラックパッドを2本指で上下に動かす", settings.twoFingerScroll()) { _, enabled ->
+            settings.setTwoFingerScroll(enabled)
+        }
+        addSetting(root, "ピンチでズーム", "対応するPC画面へCtrl＋ホイールとして送信", settings.trackpadPinchZoom()) { _, enabled ->
+            settings.setTrackpadPinchZoom(enabled)
+        }
+        addSetting(root, "3本指タップで中クリック", "動かさずに3本指でタップ", settings.threeFingerMiddleClick()) { _, enabled ->
+            settings.setThreeFingerMiddleClick(enabled)
+        }
+        addSpeedSetting(root, "スクロール速度", settings.scrollSpeed(), settings::setScrollSpeed)
+        addSetting(root, "スクロール方向を反転", "2本指で動かしたときのスクロール方向を逆にする", settings.reverseScroll()) { _, enabled ->
+            settings.setReverseScroll(enabled)
+        }
+    }
+
+    private fun addOrientationSetting(root: LinearLayout) {
+        val options = arrayOf("自動（端末の設定に従う）", "縦向き", "横向き")
+        val item = column().apply { setPadding(0, dp(8), 0, dp(12)) }
+        val choice = button("画面の向き: ${options[settings.screenOrientation()]}") {}
+        choice.setOnClickListener {
+            AlertDialog.Builder(this).setTitle("画面の向き")
+                .setSingleChoiceItems(options, settings.screenOrientation()) { dialog, which ->
+                    settings.setScreenOrientation(which)
+                    choice.text = "画面の向き: ${options[which]}"
+                    dialog.dismiss()
+                    applyScreenOrientation()
+                }.setNegativeButton("キャンセル", null).show()
+        }
+        item.addView(choice, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(item)
+    }
+
+    private fun addPointerSendModeSetting(root: LinearLayout) {
+        val options = arrayOf("即時（毎回送信）", "16ms（送信多め）", "32ms（標準）")
+        val item = column().apply { setPadding(0, dp(8), 0, dp(12)) }
+        val choice = button("カーソルの送信間隔: ${options[settings.pointerSendMode()]}") {}
+        choice.setOnClickListener {
+            AlertDialog.Builder(this).setTitle("カーソルの送信間隔")
+                .setSingleChoiceItems(options, settings.pointerSendMode()) { dialog, which ->
+                    settings.setPointerSendMode(which)
+                    choice.text = "カーソルの送信間隔: ${options[which]}"
+                    dialog.dismiss()
+                }.setNegativeButton("キャンセル", null).show()
+        }
+        item.addView(choice, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        item.addView(label("同じ速さのまま、カーソル移動の送信頻度を変えられます。", 13, false).apply {
+            setTextColor(AppColors.MUTED)
+            setPadding(0, dp(2), 0, 0)
+        })
+        root.addView(item)
+    }
+
+    private fun applyScreenOrientation() {
+        requestedOrientation = when (settings.screenOrientation()) {
+            1 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            2 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    private fun applyKeepScreenOn() {
+        if (settings.keepScreenOn()) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private fun addSpeedSetting(root: LinearLayout, title: String, speed: Float, save: (Float) -> Unit) {
+        val item = column().apply { setPadding(0, dp(8), 0, dp(12)) }
+        val value = label(String.format(Locale.JAPAN, "%s: %.1f倍", title, speed), 16, false)
+        val slider = SeekBar(this).apply {
+            max = 25 // 0.5–3.0 times in 0.1 steps.
+            progress = ((speed - 0.5f) * 10).roundToInt().coerceIn(0, max)
+        }
+        item.addView(value)
+        item.addView(slider, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(item)
+        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
+                val selected = 0.5f + progress / 10f
+                value.text = String.format(Locale.JAPAN, "%s: %.1f倍", title, selected)
+                if (fromUser) save(selected)
+            }
+            override fun onStartTrackingTouch(bar: SeekBar) {}
+            override fun onStopTrackingTouch(bar: SeekBar) {}
+        })
+    }
+
+    private fun addPitchSetting(root: LinearLayout, currentPitchMm: Float) {
+        val startingPitch = (currentPitchMm.takeIf { it.isFinite() && it > 0 }
+            ?: settings.keyPitchMm().takeIf { it.isFinite() && it > 0 } ?: 6f).coerceIn(3f, 24f)
+        val slider = SeekBar(this).apply {
+            max = 210 // 3.0–24.0 mm in 0.1 mm steps.
+            progress = ((startingPitch - 3f) * 10).roundToInt()
+        }
+        val selected = label("キーピッチ: ${pitchText(3f + slider.progress / 10f)}", 16, true)
+        root.addView(selected)
+        root.addView(label("端末の画面密度から換算した概算値です。バーで1キー分の横幅を指定します。画面に収めるにはメニューの「表示をリセット」を押します。", 13, false).apply {
+            setTextColor(AppColors.MUTED)
+            setPadding(0, dp(4), 0, dp(10))
+        })
+        root.addView(slider, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
+                val pitch = 3f + progress / 10f
+                selected.text = "キーピッチ: ${pitchText(pitch)}"
+                if (fromUser) settings.setKeyPitchMm(pitch)
+            }
+            override fun onStartTrackingTouch(bar: SeekBar) {}
+            override fun onStopTrackingTouch(bar: SeekBar) {}
+        })
+    }
+
+    private fun pitchText(mm: Float): String =
+        if (mm > 0 && mm.isFinite()) String.format(Locale.JAPAN, "約 %.1f mm", mm) else "取得できません"
+
+    private fun addSetting(root: LinearLayout, title: String, detail: String, enabled: Boolean,
+        listener: CompoundButton.OnCheckedChangeListener) {
+        val item = column().apply { setPadding(0, dp(8), 0, dp(12)) }
+        val toggle = Switch(this).apply {
+            text = title
+            textSize = 16f
+            setTextColor(AppColors.TEXT)
+            isChecked = enabled
+            setOnCheckedChangeListener(listener)
+        }
+        item.addView(toggle, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        item.addView(label(detail, 13, false).apply {
+            setTextColor(AppColors.MUTED)
+            setPadding(0, dp(2), 0, 0)
+        })
+        root.addView(item)
+    }
+
+    @Deprecated("Use the system back dispatcher when moving to AndroidX")
+    override fun onBackPressed() {
+        if (menuPanel?.visibility == View.VISIBLE) setMenuOpen(false)
+        else if (settingsVisible) showPage(hid.isConnected())
+        else super.onBackPressed()
+    }
+
+    private fun handleKey(key: KleLayout.Key) {
+        val binding = bindingFor(key)
+        if (binding == null) { toast("このキーを長押しして割り当ててください"); return }
+        if (binding.modifier != 0) {
+            if (settings.stickyModifiers()) modifiers = modifiers xor binding.modifier
+            else hid.key(binding.modifier, 0)
+        } else {
+            hid.key(if (settings.stickyModifiers()) modifiers else 0, binding.code)
+            modifiers = 0
+        }
+        keyboardView?.setActiveModifiers(modifiers)
+    }
+
+    private fun bindingFor(key: KleLayout.Key): KeyBinding? =
+        KeyBinding.named(overrides.optString(key.index.toString(), "")) ?: KeyBinding.forKey(key)
+
+    private fun editBinding(key: KleLayout.Key) {
+        val options = KeyBinding.options()
+        val names = options.map { it.name }.toTypedArray()
+        AlertDialog.Builder(this).setTitle("「${key.displayLabel()}」のキー割り当て")
+            .setItems(names) { _, which ->
+                try { overrides.put(key.index.toString(), options[which].name) }
+                catch (_: Exception) { return@setItems }
+                saveOverrides(); keyboardView?.invalidate()
+            }
+            .setNeutralButton("自動割り当て") { _, _ ->
+                overrides.remove(key.index.toString())
+                saveOverrides(); keyboardView?.invalidate()
+            }
+            .setNegativeButton("閉じる", null).show()
+    }
+
+    private fun loadLayout() {
+        var json = preferences.getString("kle_json", null)
+        try {
+            if (json == null) json = assets.open("default-kle.json").use(::readText)
+            layout = KleLayout.parse(requireNotNull(json))
+            overrides = JSONObject(preferences.getString("overrides", "{}") ?: "{}")
+        } catch (_: Exception) {
+            try {
+                layout = KleLayout.parse(assets.open("default-kle.json").use(::readText))
+                overrides = JSONObject()
+            } catch (error: Exception) { throw IllegalStateException("標準レイアウトを読めません", error) }
+        }
+    }
+
+    private fun openKlePicker() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "text/plain", "application/octet-stream"))
+        }
+        startActivityForResult(intent, REQUEST_KLE)
+    }
+
+    private fun chooseLayout() {
+        AlertDialog.Builder(this).setTitle("レイアウトを選択")
+            .setItems(arrayOf("添付のGhostedレイアウト", "標準キーボード", "KLE JSONファイルを開く")) { _, which ->
+                if (which == 2) openKlePicker()
+                else loadBundled(if (which == 0) "ghosted-trackpad.json" else "default-kle.json")
+            }
+            .setNegativeButton("閉じる", null).show()
+    }
+
+    private fun loadBundled(asset: String) {
+        try { assets.open(asset).use { applyLayout(readText(it)) } }
+        catch (error: Exception) { toast("レイアウトを読み込めません: ${error.message}") }
+    }
+
+    private fun importKle(data: Intent) {
+        try {
+            val uri = data.data ?: throw IllegalArgumentException("ファイルを開けません")
+            val input = contentResolver.openInputStream(uri) ?: throw IllegalArgumentException("ファイルを開けません")
+            input.use { applyLayout(readText(it)) }
+        } catch (error: Exception) {
+            AlertDialog.Builder(this).setTitle("KLE JSONを読み込めません")
+                .setMessage(error.message).setPositiveButton("閉じる", null).show()
+        }
+    }
+
+    private fun applyLayout(json: String) {
+        val parsed = KleLayout.parse(json)
+        layout = parsed; overrides = JSONObject(); modifiers = 0
+        settings.clearAutoKeyScalePx()
+        keyboardViewState = null
+        preferences.edit().putString("kle_json", json).putString("overrides", "{}").apply()
+        showPage(hid.isConnected())
+        toast("${parsed.keys.size}キーのレイアウトを読み込みました")
+    }
+
+    private fun readText(input: InputStream): String {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            val count = input.read(buffer)
+            if (count == -1) break
+            if (output.size() + count > 1024 * 1024) throw IllegalArgumentException("ファイルは1MB以下にしてください")
+            output.write(buffer, 0, count)
+        }
+        return output.toString(StandardCharsets.UTF_8.name())
+    }
+
+    private fun saveOverrides() { preferences.edit().putString("overrides", overrides.toString()).apply() }
+
+    private fun ensureReady() {
+        if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED)
+            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQUEST_CONNECT)
+        else if (!hid.isBluetoothReady()) startActivityForResult(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE), REQUEST_ENABLE)
+        else { hid.start(); refreshDevices() }
+    }
+
+    private fun maybeReconnect() {
+        val address = reconnectAddress ?: return
+        if (!activityVisible || reconnectAttempted || !hid.isRegistered() ||
+            hid.isConnected() || hid.isConnecting() || hid.isCancelling()) return
+        val device = hid.pairedDevices().firstOrNull { it.address == address }
+        if (device == null) {
+            reconnectAttempted = true
+            if (showingControls) showPage(false)
+            return
+        }
+        reconnectAttempted = true
+        hid.connect(device)
+    }
+
+    private fun restoringConnection(): Boolean = reconnectAddress != null && !hid.isConnected() &&
+        (!activityVisible || !reconnectAttempted || hid.isConnecting())
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, results)
+        val granted = results.isNotEmpty() && results[0] == PackageManager.PERMISSION_GRANTED
+        when (requestCode) {
+            REQUEST_CONNECT -> if (granted) ensureReady() else statusText = "Bluetooth接続権限が必要です"
+            REQUEST_ADVERTISE -> if (granted) requestDiscoverable() else toast("Bluetooth公開権限が必要です")
+        }
+        updateStatus()
+    }
+
+    @Deprecated("Uses the existing document picker flow")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        when {
+            requestCode == REQUEST_ENABLE && resultCode == RESULT_OK -> ensureReady()
+            requestCode == REQUEST_ENABLE -> { statusText = "Bluetoothをオンにしてください"; updateStatus() }
+            requestCode == REQUEST_DISCOVERABLE && resultCode > 0 -> {
+                statusText = "公開中です。PCからペアリングしてください"; updateStatus()
+            }
+            requestCode == REQUEST_KLE && resultCode == RESULT_OK && data != null -> importKle(data)
+        }
+    }
+
+    private fun requestDiscoverable() {
+        if (!hid.isRegistered()) { toast("HIDの準備が完了してから再試行してください"); return }
+        if (Build.VERSION.SDK_INT >= 31 &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_ADVERTISE), REQUEST_ADVERTISE)
+            return
+        }
+        val intent = Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
+            putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
+        }
+        startActivityForResult(intent, REQUEST_DISCOVERABLE)
+    }
+
+    private fun refreshDevices() {
+        val spinner = devices ?: return
+        var selectedAddress: String? = paired.getOrNull(spinner.selectedItemPosition)?.address
+        selectedAddress = RecentDevice.preferredAddress(preferences, selectedAddress)
+        paired.clear(); paired.addAll(hid.pairedDevices())
+        val names = paired.map { it.name?.takeIf(String::isNotEmpty) ?: it.address }.toMutableList()
+        val selectedIndex = RecentDevice.indexOf(paired, selectedAddress)
+        if (names.isEmpty()) names.add("ペアリング済みのPCがありません")
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, names)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        spinner.adapter = adapter
+        if (selectedIndex >= 0) spinner.setSelection(selectedIndex)
+    }
+
+    private fun updateStatus() {
+        val status = statusView ?: return
+        val connected = hid.isConnected()
+        status.text = (if (connected) "● " else "○ ") + statusText
+        status.setTextColor(if (connected) AppColors.ACCENT else AppColors.MUTED)
+        connectionButton?.let { button ->
+            val cancelling = hid.isCancelling()
+            button.text = when {
+                cancelling -> "キャンセル中…"
+                hid.isConnecting() -> "接続をキャンセル"
+                else -> "選択したPCに接続"
+            }
+            button.isEnabled = !cancelling
+            devices?.isEnabled = !cancelling && !hid.isConnecting()
+        }
+    }
+
+    private fun column(): LinearLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+    private fun horizontal(): LinearLayout = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+    private fun section(text: String): TextView = label(text, 20, true).apply { setPadding(0, dp(24), 0, dp(8)) }
+    private fun label(text: String, size: Int, bold: Boolean): TextView = TextView(this).apply {
+        this.text = text
+        textSize = size.toFloat()
+        setTextColor(AppColors.TEXT)
+        if (bold) setTypeface(null, Typeface.BOLD)
+    }
+    private fun button(text: String, click: View.OnClickListener? = null): Button = Button(this).apply {
+        this.text = text
+        textSize = 13f
+        isAllCaps = false
+        if (click != null) setOnClickListener(click)
+    }
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density + .5f).toInt()
+    private fun toast(text: String) { Toast.makeText(this, text, Toast.LENGTH_SHORT).show() }
+}
