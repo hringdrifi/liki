@@ -129,6 +129,8 @@ internal class HidController(private val context: Context, private val settings:
                     (id.toInt() == HidReports.KEYBOARD_ID || (bootMode && id.toInt() == 0)) -> HidReports.keyboard(0, 0)
                 type == BluetoothHidDevice.REPORT_TYPE_INPUT && id.toInt() == HidReports.MOUSE_ID ->
                     HidReports.mouse(mouseButtons, 0, 0, 0)
+                type == BluetoothHidDevice.REPORT_TYPE_INPUT && id.toInt() == HidReports.CONSUMER_ID ->
+                    HidReports.consumer(0)
                 type == BluetoothHidDevice.REPORT_TYPE_OUTPUT && id.toInt() == HidReports.KEYBOARD_ID -> byteArrayOf(0)
                 else -> { service.reportError(device, BluetoothHidDevice.ERROR_RSP_INVALID_PARAM); return }
             }
@@ -192,6 +194,22 @@ internal class HidController(private val context: Context, private val settings:
         keyHandler.postAtTime({
             if (destination == host) hid?.sendReport(destination,
                 if (bootMode) 0 else HidReports.KEYBOARD_ID, HidReports.keyboard(0, 0))
+        }, releaseAt)
+        nextKeyTime = releaseAt + 12
+    }
+
+    fun consumer(usage: Int) {
+        val destination = host ?: return
+        if (hid == null || bootMode) return
+        val pressAt = maxOf(SystemClock.uptimeMillis(), nextKeyTime)
+        val releaseAt = pressAt + 18
+        keyHandler.postAtTime({
+            if (destination == host && !bootMode) hid?.sendReport(destination,
+                HidReports.CONSUMER_ID, HidReports.consumer(usage))
+        }, pressAt)
+        keyHandler.postAtTime({
+            if (destination == host && !bootMode) hid?.sendReport(destination,
+                HidReports.CONSUMER_ID, HidReports.consumer(0))
         }, releaseAt)
         nextKeyTime = releaseAt + 12
     }
@@ -296,6 +314,7 @@ internal class HidController(private val context: Context, private val settings:
         if (service != null) {
             host?.let { destination ->
                 service.sendReport(destination, if (bootMode) 0 else HidReports.KEYBOARD_ID, HidReports.keyboard(0, 0))
+                if (!bootMode) service.sendReport(destination, HidReports.CONSUMER_ID, HidReports.consumer(0))
                 mouseButtons = 0
                 sendMouse(0, 0, 0)
             }

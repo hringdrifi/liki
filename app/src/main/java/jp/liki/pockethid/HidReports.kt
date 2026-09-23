@@ -3,6 +3,7 @@ package jp.liki.pockethid
 internal object HidReports {
     const val KEYBOARD_ID = 1
     const val MOUSE_ID = 2
+    const val CONSUMER_ID = 3
     const val MOD_CTRL = 0x01
     const val MOD_SHIFT = 0x02
     const val MOD_ALT = 0x04
@@ -19,6 +20,7 @@ internal object HidReports {
 
     // Report 1: boot-style keyboard with one LED output byte.
     // Report 2: three-button relative mouse with vertical wheel.
+    // Report 3: one 16-bit Consumer Control usage for media keys.
     @JvmField val DESCRIPTOR = byteArrayOf(
         0x05, 0x01, 0x09, 0x06, 0xa1.toByte(), 0x01, 0x85.toByte(), 0x01,
         0x05, 0x07, 0x19, 0xe0.toByte(), 0x29, 0xe7.toByte(), 0x15, 0x00,
@@ -36,7 +38,11 @@ internal object HidReports {
         0x95.toByte(), 0x01, 0x75, 0x05, 0x81.toByte(), 0x01,
         0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x38,
         0x15, 0x81.toByte(), 0x25, 0x7f, 0x75, 0x08, 0x95.toByte(), 0x03,
-        0x81.toByte(), 0x06, 0xc0.toByte(), 0xc0.toByte()
+        0x81.toByte(), 0x06, 0xc0.toByte(), 0xc0.toByte(),
+        0x05, 0x0c, 0x09, 0x01, 0xa1.toByte(), 0x01, 0x85.toByte(), 0x03,
+        0x15, 0x00, 0x26, 0xff.toByte(), 0x03,
+        0x19, 0x00, 0x2a, 0xff.toByte(), 0x03,
+        0x75, 0x10, 0x95.toByte(), 0x01, 0x81.toByte(), 0x00, 0xc0.toByte()
     )
 
     @JvmStatic fun keyboard(modifiers: Int, key: Int): ByteArray =
@@ -44,6 +50,9 @@ internal object HidReports {
 
     @JvmStatic fun mouse(buttons: Int, x: Int, y: Int, wheel: Int): ByteArray =
         byteArrayOf(buttons.toByte(), x.toByte(), y.toByte(), wheel.toByte())
+
+    @JvmStatic fun consumer(usage: Int): ByteArray =
+        byteArrayOf(usage.toByte(), (usage shr 8).toByte())
 
     @JvmStatic fun ascii(char: Char): IntArray? {
         if (char in 'a'..'z') return intArrayOf(0, 4 + (char - 'a'))

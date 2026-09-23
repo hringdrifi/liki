@@ -2,10 +2,15 @@ package jp.liki.pockethid
 
 import java.util.Locale
 
+internal enum class LayerAction { NONE, TOGGLE, BASE, CYCLE, ONE_SHOT, MOMENTARY }
+
 internal class KeyBinding private constructor(
     @JvmField val name: String,
     @JvmField val code: Int,
-    @JvmField val modifier: Int
+    @JvmField val modifier: Int,
+    @JvmField val layer: Int = 0,
+    @JvmField val layerAction: LayerAction = LayerAction.NONE,
+    @JvmField val consumerUsage: Int = 0
 ) {
     companion object {
         private val OPTIONS = buildOptions()
@@ -57,10 +62,37 @@ internal class KeyBinding private constructor(
         private fun buildOptions(): List<KeyBinding> = buildList {
             fun add(name: String, code: Int) { add(KeyBinding(name, code, 0)) }
             fun addMod(name: String, modifier: Int) { add(KeyBinding(name, 0, modifier)) }
+            fun addCombo(name: String, code: Int, modifier: Int) { add(KeyBinding(name, code, modifier)) }
+            fun addConsumer(name: String, usage: Int) {
+                add(KeyBinding(name, 0, 0, consumerUsage = usage))
+            }
             addMod("Ctrl", HidReports.MOD_CTRL)
             addMod("Shift", HidReports.MOD_SHIFT)
             addMod("Alt", HidReports.MOD_ALT)
             addMod("Win/Cmd", HidReports.MOD_GUI)
+            add(KeyBinding("レイヤー0へ戻る", 0, 0, 0, LayerAction.BASE))
+            add(KeyBinding("レイヤー1切り替え", 0, 0, 1, LayerAction.TOGGLE))
+            add(KeyBinding("レイヤー2切り替え", 0, 0, 2, LayerAction.TOGGLE))
+            add(KeyBinding("次のレイヤー", 0, 0, 0, LayerAction.CYCLE))
+            add(KeyBinding("次の1キーだけレイヤー1", 0, 0, 1, LayerAction.ONE_SHOT))
+            add(KeyBinding("次の1キーだけレイヤー2", 0, 0, 2, LayerAction.ONE_SHOT))
+            add(KeyBinding("押している間レイヤー1", 0, 0, 1, LayerAction.MOMENTARY))
+            add(KeyBinding("押している間レイヤー2", 0, 0, 2, LayerAction.MOMENTARY))
+            addCombo("Ctrl+Z", 29, HidReports.MOD_CTRL)
+            addCombo("Ctrl+Shift+Z", 29, HidReports.MOD_CTRL or HidReports.MOD_SHIFT)
+            addCombo("Ctrl+Y", 28, HidReports.MOD_CTRL)
+            addCombo("Ctrl+X", 27, HidReports.MOD_CTRL)
+            addCombo("Ctrl+C", 6, HidReports.MOD_CTRL)
+            addCombo("Ctrl+V", 25, HidReports.MOD_CTRL)
+            addCombo("Ctrl+S", 22, HidReports.MOD_CTRL)
+            addCombo("Ctrl+A", 4, HidReports.MOD_CTRL)
+            addConsumer("Play/Pause", 0xCD)
+            addConsumer("Next Track", 0xB5)
+            addConsumer("Previous Track", 0xB6)
+            addConsumer("Stop", 0xB7)
+            addConsumer("Volume Up", 0xE9)
+            addConsumer("Volume Down", 0xEA)
+            addConsumer("Mute", 0xE2)
             for (char in 'A'..'Z') add(char.toString(), 4 + (char - 'A'))
             for (char in '1'..'9') add(char.toString(), 30 + (char - '1'))
             add("0", 39)

@@ -5,8 +5,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
-import android.os.Handler
-import android.os.Looper
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
@@ -24,34 +22,36 @@ internal class KleKeyboardView(
 
     interface Listener {
         fun bindingFor(key: KleLayout.Key): KeyBinding?
-        fun onKeyTap(key: KleLayout.Key)
-        fun onKeyLongPress(key: KleLayout.Key)
+        fun hasLayerOverride(key: KleLayout.Key): Boolean
+        fun isLayerKeyActive(key: KleLayout.Key): Boolean
+        fun isEditing(): Boolean
+        fun activeLayer(): Int
+        fun onKeyTap(key: KleLayout.Key, layer: Int)
+        fun onMomentaryDown(key: KleLayout.Key)
+        fun onMomentaryUp()
     }
 
     private val trackpadGesture = TrackpadGesture(this, hid, settings)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val handler = Handler(Looper.getMainLooper())
     private val density = resources.displayMetrics.density
     private var keyboardLayout: KleLayout? = null
     private var minX = 0f; private var minY = 0f; private var maxX = 0f; private var maxY = 0f
     private var zoom = 1f; private var panX = 0f; private var panY = 0f
     private var downX = 0f; private var downY = 0f; private var lastX = 0f; private var lastY = 0f
     private var pinchSpan = 0f
-    private var moved = false; private var longPressed = false; private var pinching = false
+    private var moved = false; private var pinching = false
     private var trackpadTouch = false
     private var selected: KleLayout.Key? = null
+    private var momentaryGesture = false
+    private var momentaryPointerId = -1
+    private data class ChordTouch(val key: KleLayout.Key, val layer: Int,
+        val downX: Float, val downY: Float, var moved: Boolean = false)
+    private val chordTouches = mutableMapOf<Int, ChordTouch>()
     private var activeModifiers = 0
-    private val longPress = Runnable {
-        val key = selected
-        if (settings.longPressBinding() && !moved && !pinching && key != null) {
-            longPressed = true
-            listener.onKeyLongPress(key)
-        }
-    }
-
+    private var activeLayer = 0
     init {
         setBackgroundColor(AppColors.BACKGROUND)
-        contentDescription = "KLEキーボード。Ghostedキーはトラックパッド、通常キーはタップで入力、長押しで割り当て"
+        contentDescription = "KLEキーボード。通常はタップで入力、設定モードではタップで割り当て"
     }
 
     fun setLayout(layout: KleLayout) {
@@ -71,6 +71,7 @@ internal class KleKeyboardView(
     }
 
     fun setActiveModifiers(modifiers: Int) { activeModifiers = modifiers; invalidate() }
+    fun setLayer(layer: Int) { activeLayer = layer; invalidate() }
     fun resetZoom() { zoom = 1f; panX = 0f; panY = 0f; invalidate() }
     fun viewState(): ViewState = ViewState(zoom, panX, panY)
     fun restoreViewState(state: ViewState) {
@@ -122,9 +123,15 @@ internal class KleKeyboardView(
         canvas.save()
         canvas.rotate(key.rotation, key.rx, key.ry)
         val binding = listener.bindingFor(key)
-        val active = !key.ghost && binding != null && binding.modifier != 0 && activeModifiers and binding.modifier != 0
+        val overridden = listener.hasLayerOverride(key)
+        val active = !key.ghost && (listener.isLayerKeyActive(key) ||
+            binding != null && binding.modifier != 0 && activeModifiers and binding.modifier != 0)
         paint.style = Paint.Style.FILL
-        paint.color = if (active) Color.rgb(36, 115, 109) else darkKeyColor(key.color)
+        paint.color = when {
+            active -> Color.rgb(36, 115, 109)
+            activeLayer != 0 && overridden && !key.ghost -> Color.rgb(38, 72, 91)
+            else -> darkKeyColor(key.color)
+        }
         if (!key.decal) {
             canvas.drawRoundRect(key.x + .025f, key.y + .025f, key.x + key.w - .025f,
                 key.y + key.h - .025f, .1f, .1f, paint)
@@ -142,11 +149,10 @@ internal class KleKeyboardView(
         paint.style = Paint.Style.FILL
         paint.color = AppColors.TEXT
         paint.typeface = Typeface.DEFAULT_BOLD
-        var hasLegend = false
-        for (index in 0 until 9) {
+        val showBinding = !key.ghost && !settings.kleJsonKeyLabels()
+        for (index in 0 until if (showBinding) 0 else 9) {
             val label = key.labels[index]
             if (label.isEmpty()) continue
-            hasLegend = true
             val size = minOf(.25f, maxOf(.14f,
                 (key.w - .18f) / maxOf(2f, label.length * .54f)))
             val col = index % 3; val row = index / 3
@@ -155,10 +161,15 @@ internal class KleKeyboardView(
             val textY = when (row) { 0 -> key.y + .3f; 1 -> key.y + key.h / 2 + .08f; else -> key.y + key.h - .1f }
             drawText(canvas, label, textX, textY, size)
         }
-        if (!hasLegend && !key.ghost && binding != null) {
+        if (showBinding && binding != null) {
             paint.textAlign = Paint.Align.CENTER
             drawText(canvas, binding.name, key.x + key.w / 2,
-                key.y + key.h / 2 + .08f, .28f)
+                key.y + key.h / 2 + .08f,
+                minOf(.28f, maxOf(.12f, (key.w - .14f) / maxOf(2f, binding.name.length * .55f))))
+            if (activeLayer != 0 && !overridden) {
+                paint.color = AppColors.MUTED
+                drawText(canvas, "継承", key.x + key.w / 2, key.y + key.h - .1f, .13f)
+            }
         }
         canvas.restore()
     }
@@ -180,20 +191,26 @@ internal class KleKeyboardView(
         val action = event.actionMasked
         if (action == MotionEvent.ACTION_DOWN) {
             downX = event.x; lastX = downX; downY = event.y; lastY = downY
-            moved = false; longPressed = false; pinching = false
+            moved = false; pinching = false
             selected = hit(layout, downX, downY)
-            trackpadTouch = selected?.ghost == true
+            trackpadTouch = selected?.ghost == true && !listener.isEditing()
             if (trackpadTouch) { trackpadGesture.onTouch(event); return true }
-            if (settings.longPressBinding()) handler.postDelayed(longPress, 550)
+            if (!listener.isEditing() &&
+                selected?.let { listener.bindingFor(it)?.layerAction == LayerAction.MOMENTARY } == true) {
+                momentaryGesture = true
+                momentaryPointerId = event.getPointerId(0)
+                listener.onMomentaryDown(requireNotNull(selected))
+                if (settings.touchVibration()) performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            }
             return true
         }
+        if (momentaryGesture) return handleMomentaryTouch(event, layout)
         if (trackpadTouch) {
             trackpadGesture.onTouch(event)
             if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) trackpadTouch = false
             return true
         }
         if (action == MotionEvent.ACTION_POINTER_DOWN && event.pointerCount == 2) {
-            handler.removeCallbacks(longPress)
             pinching = true
             pinchSpan = span(event)
             return true
@@ -208,7 +225,6 @@ internal class KleKeyboardView(
                 val x = event.x; val y = event.y
                 if (hypot(x - downX, y - downY) > 8 * density) {
                     moved = true
-                    handler.removeCallbacks(longPress)
                 }
                 if (moved && settings.dragMoveKeyboard()) {
                     panX += x - lastX; panY += y - lastY; invalidate()
@@ -218,16 +234,71 @@ internal class KleKeyboardView(
             return true
         }
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-            handler.removeCallbacks(longPress)
             val key = selected
-            if (action == MotionEvent.ACTION_UP && !moved && !pinching && !longPressed && key != null) {
+            if (action == MotionEvent.ACTION_UP && !moved && !pinching && key != null) {
                 if (settings.touchVibration()) performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                listener.onKeyTap(key)
+                listener.onKeyTap(key, listener.activeLayer())
             }
             selected = null
             return true
         }
         return true
+    }
+
+    private fun handleMomentaryTouch(event: MotionEvent, layout: KleLayout): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                val at = event.actionIndex
+                val key = hit(layout, event.getX(at), event.getY(at))
+                if (key != null && !key.ghost &&
+                    listener.bindingFor(key)?.layerAction != LayerAction.MOMENTARY) {
+                    chordTouches[event.getPointerId(at)] = ChordTouch(key, listener.activeLayer(),
+                        event.getX(at), event.getY(at))
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                for ((id, touch) in chordTouches) {
+                    val at = event.findPointerIndex(id)
+                    if (at >= 0 && hypot(event.getX(at) - touch.downX,
+                            event.getY(at) - touch.downY) > 8 * density) touch.moved = true
+                }
+                val at = event.findPointerIndex(momentaryPointerId)
+                if (at >= 0 && hypot(event.getX(at) - downX,
+                        event.getY(at) - downY) > 8 * density) {
+                    moved = true
+                }
+            }
+            MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_UP -> {
+                val id = event.getPointerId(event.actionIndex)
+                if (id == momentaryPointerId) releaseMomentary()
+                else chordTouches.remove(id)?.let { touch ->
+                    if (!touch.moved) {
+                        if (settings.touchVibration()) performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        listener.onKeyTap(touch.key, touch.layer)
+                    }
+                }
+                if (event.actionMasked == MotionEvent.ACTION_UP) {
+                    releaseMomentary()
+                    chordTouches.clear()
+                    selected = null
+                    momentaryGesture = false
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                releaseMomentary()
+                chordTouches.clear()
+                selected = null
+                momentaryGesture = false
+            }
+        }
+        return true
+    }
+
+    private fun releaseMomentary() {
+        if (momentaryPointerId >= 0) {
+            momentaryPointerId = -1
+            listener.onMomentaryUp()
+        }
     }
 
     private fun zoomAt(factor: Float, focusX: Float, focusY: Float) {
@@ -261,7 +332,9 @@ internal class KleKeyboardView(
         x >= left && x < left + w && y >= top && y < top + h
 
     override fun onDetachedFromWindow() {
-        handler.removeCallbacks(longPress)
+        releaseMomentary()
+        chordTouches.clear()
+        momentaryGesture = false
         trackpadGesture.cancel()
         super.onDetachedFromWindow()
     }

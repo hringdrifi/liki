@@ -8,8 +8,8 @@ internal class AppSettings(context: Context) {
     fun stickyModifiers(): Boolean = preferences.getBoolean("sticky_modifiers", true)
     fun setStickyModifiers(enabled: Boolean) = save("sticky_modifiers", enabled)
 
-    fun longPressBinding(): Boolean = preferences.getBoolean("long_press_binding", true)
-    fun setLongPressBinding(enabled: Boolean) = save("long_press_binding", enabled)
+    fun kleJsonKeyLabels(): Boolean = preferences.getBoolean("kle_json_key_labels", true)
+    fun setKleJsonKeyLabels(enabled: Boolean) = save("kle_json_key_labels", enabled)
 
     fun pinchZoom(): Boolean = preferences.getBoolean("pinch_zoom", true)
     fun setPinchZoom(enabled: Boolean) = save("pinch_zoom", enabled)

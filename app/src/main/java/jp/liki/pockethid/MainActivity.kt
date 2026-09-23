@@ -66,6 +66,20 @@ class MainActivity : Activity() {
     private var statusText = "準備中…"
     private lateinit var layout: KleLayout
     private var overrides = JSONObject()
+    private var layerOverrides = JSONObject()
+    private var activeLayer = 0
+    private var activeLayerKeyIndex: Int? = null
+    private var oneShotReturnLayer: Int? = null
+    private var oneShotReturnKeyIndex: Int? = null
+    private var momentaryPreviousLayer: Int? = null
+    private var momentaryPreviousKeyIndex: Int? = null
+    private var momentaryTargetLayer: Int? = null
+    private var layerIndicator: TextView? = null
+    private var bindingEditMode = false
+    private var bindingEditLayer = 0
+    private var bindingEditBaseSnapshot: String? = null
+    private var bindingEditLayersSnapshot: String? = null
+    private var bindingLayerButtons = emptyList<Button>()
     private var keyboardView: KleKeyboardView? = null
     private var keyboardViewState: KleKeyboardView.ViewState? = null
     private var modifiers = 0
@@ -76,12 +90,26 @@ class MainActivity : Activity() {
         settings = AppSettings(this)
         applyKeepScreenOn()
         reconnectAddress = state?.getString("reconnect_address")
+        activeLayer = state?.getInt("active_layer", 0)?.coerceIn(0, 2) ?: 0
+        activeLayerKeyIndex = state?.getInt("active_layer_key", -1)?.takeIf { it >= 0 }
+        oneShotReturnLayer = state?.getInt("one_shot_return_layer", -1)?.takeIf { it in 0..2 }
+        oneShotReturnKeyIndex = state?.getInt("one_shot_return_key", -1)?.takeIf { it >= 0 }
         if (state?.containsKey("keyboard_zoom") == true) {
             keyboardViewState = KleKeyboardView.ViewState(
                 state.getFloat("keyboard_zoom"), state.getFloat("keyboard_pan_x"), state.getFloat("keyboard_pan_y"))
         }
         applyScreenOrientation()
         loadLayout()
+        if (state?.getBoolean("binding_edit_mode") == true) {
+            bindingEditMode = true
+            bindingEditLayer = state.getInt("binding_edit_layer", 0).coerceIn(0, 2)
+            bindingEditBaseSnapshot = state.getString("binding_edit_base_snapshot") ?: overrides.toString()
+            bindingEditLayersSnapshot = state.getString("binding_edit_layers_snapshot") ?: layerOverrides.toString()
+            try {
+                overrides = JSONObject(state.getString("binding_edit_base_draft") ?: overrides.toString())
+                layerOverrides = JSONObject(state.getString("binding_edit_layers_draft") ?: layerOverrides.toString())
+            } catch (_: Exception) { cancelBindingEditDraft() }
+        }
         hid = HidController(this, settings) { message, connected ->
             runOnUiThread {
                 if (connected != hid.isConnected()) return@runOnUiThread
@@ -120,6 +148,19 @@ class MainActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("reconnect_address", reconnectAddress ?: hid.connectedAddress())
+        outState.putInt("active_layer", momentaryPreviousLayer ?: activeLayer)
+        outState.putInt("active_layer_key",
+            (if (momentaryPreviousLayer != null) momentaryPreviousKeyIndex else activeLayerKeyIndex) ?: -1)
+        outState.putInt("one_shot_return_layer", oneShotReturnLayer ?: -1)
+        outState.putInt("one_shot_return_key", oneShotReturnKeyIndex ?: -1)
+        outState.putBoolean("binding_edit_mode", bindingEditMode)
+        if (bindingEditMode) {
+            outState.putInt("binding_edit_layer", bindingEditLayer)
+            outState.putString("binding_edit_base_snapshot", bindingEditBaseSnapshot)
+            outState.putString("binding_edit_layers_snapshot", bindingEditLayersSnapshot)
+            outState.putString("binding_edit_base_draft", overrides.toString())
+            outState.putString("binding_edit_layers_draft", layerOverrides.toString())
+        }
         (keyboardView?.viewState() ?: keyboardViewState)?.let {
             outState.putFloat("keyboard_zoom", it.zoom)
             outState.putFloat("keyboard_pan_x", it.panX)
@@ -136,7 +177,8 @@ class MainActivity : Activity() {
     private fun showPage(connected: Boolean) {
         showingControls = connected
         settingsVisible = false
-        devices = null; connectionButton = null; keyboardView = null
+        devices = null; connectionButton = null; keyboardView = null; layerIndicator = null
+        bindingLayerButtons = emptyList()
         menuHandle = null; menuScrim = null; menuPanel = null
         if (connected) showControls() else showConnection()
         updateStatus()
@@ -190,15 +232,56 @@ class MainActivity : Activity() {
         root.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         val keyboard = KleKeyboardView(this, hid, settings, object : KleKeyboardView.Listener {
             override fun bindingFor(key: KleLayout.Key): KeyBinding? = this@MainActivity.bindingFor(key)
-            override fun onKeyTap(key: KleLayout.Key) = handleKey(key)
-            override fun onKeyLongPress(key: KleLayout.Key) = editBinding(key)
+            override fun hasLayerOverride(key: KleLayout.Key): Boolean = this@MainActivity.hasLayerOverride(key)
+            override fun isLayerKeyActive(key: KleLayout.Key): Boolean = !bindingEditMode && key.index == activeLayerKeyIndex
+            override fun isEditing(): Boolean = bindingEditMode
+            override fun activeLayer(): Int = displayedLayer()
+            override fun onKeyTap(key: KleLayout.Key, layer: Int) {
+                if (bindingEditMode) {
+                    if (!key.ghost) editBindingForLayer(key, bindingEditLayer)
+                } else handleKey(key, layer)
+            }
+            override fun onMomentaryDown(key: KleLayout.Key) = beginMomentaryLayer(key)
+            override fun onMomentaryUp() = endMomentaryLayer()
         })
         keyboardView = keyboard
         keyboard.setLayout(layout)
         keyboardViewState?.let { keyboard.restoreViewState(it) }
         keyboardViewState = null
-        keyboard.setActiveModifiers(modifiers)
+        keyboard.setActiveModifiers(if (bindingEditMode) 0 else modifiers)
+        keyboard.setLayer(displayedLayer())
+        if (bindingEditMode) {
+            val layerRow = horizontal()
+            bindingLayerButtons = (0..2).map { layer ->
+                button("レイヤー $layer") { selectBindingEditLayer(layer) }.also { control ->
+                    layerRow.addView(control, LinearLayout.LayoutParams(0, dp(44), 1f))
+                }
+            }
+            updateBindingLayerButtons()
+            content.addView(layerRow)
+            val actions = horizontal()
+            actions.addView(button("キャンセル") { cancelBindingEdit() },
+                LinearLayout.LayoutParams(0, dp(44), 1f))
+            actions.addView(button("保存") { saveBindingEdit() },
+                LinearLayout.LayoutParams(0, dp(44), 1f))
+            content.addView(actions)
+        }
         content.addView(keyboard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        if (!bindingEditMode) {
+            val indicator = label("", 12, true).apply {
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            background = GradientDrawable().apply {
+                setColor(AppColors.SURFACE)
+                cornerRadius = dp(8).toFloat()
+            }
+            }
+            layerIndicator = indicator
+            updateLayerIndicator()
+            root.addView(indicator, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.TOP).apply {
+                leftMargin = dp(12); topMargin = dp(12)
+            })
+        }
 
         val edgeZone = FrameLayout(this)
         edgeZone.contentDescription = "右端中央から左へスワイプしてメニューを開く"
@@ -223,8 +306,9 @@ class MainActivity : Activity() {
         }
         edgeZone.setOnClickListener { setMenuOpen(true) } // Accessibility action; touch taps are consumed above.
         menuHandle = edgeZone
-        root.addView(edgeZone, FrameLayout.LayoutParams(dp(24), dp(108), Gravity.END or Gravity.CENTER_VERTICAL))
-        if (Build.VERSION.SDK_INT >= 29) root.post {
+        if (!bindingEditMode) root.addView(edgeZone,
+            FrameLayout.LayoutParams(dp(24), dp(108), Gravity.END or Gravity.CENTER_VERTICAL))
+        if (!bindingEditMode && Build.VERSION.SDK_INT >= 29) root.post {
             val top = (root.height - dp(108)) / 2
             root.systemGestureExclusionRects = listOf(Rect(root.width - dp(24), top, root.width, top + dp(108)))
         }
@@ -250,6 +334,7 @@ class MainActivity : Activity() {
             panel.addView(it)
         }
         panel.addView(label(layout.name, 13, false).apply { setTextColor(AppColors.MUTED) })
+        panel.addView(menuAction("キー割り当てを編集") { setMenuOpen(false); beginBindingEdit() })
         panel.addView(menuAction("レイアウトを選択") { setMenuOpen(false); chooseLayout() })
         panel.addView(menuAction("表示をリセット") {
             setMenuOpen(false)
@@ -308,12 +393,14 @@ class MainActivity : Activity() {
         }
         root.addView(section("キーボード"))
         addPitchSetting(root, currentPitchMm)
+        addSetting(root, "KLE JSONファイルに従った表示",
+            "オン: どのレイヤーでもKLEの文字を表示。オフ: 有効なキー割り当て名を表示",
+            settings.kleJsonKeyLabels()) { _, enabled ->
+            settings.setKleJsonKeyLabels(enabled)
+        }
         addSetting(root, "修飾キーを保持", "Ctrl・Shiftなどを次のキー入力まで保持", settings.stickyModifiers()) { _, enabled ->
             settings.setStickyModifiers(enabled)
             if (!enabled) modifiers = 0
-        }
-        addSetting(root, "長押しでキー割り当て", "キーを長押ししてHIDキーを変更", settings.longPressBinding()) { _, enabled ->
-            settings.setLongPressBinding(enabled)
         }
         addSetting(root, "ピンチで拡大縮小", "2本指でキーボードの表示倍率を変更", settings.pinchZoom()) { _, enabled ->
             settings.setPinchZoom(enabled)
@@ -471,38 +558,183 @@ class MainActivity : Activity() {
     @Deprecated("Use the system back dispatcher when moving to AndroidX")
     override fun onBackPressed() {
         if (menuPanel?.visibility == View.VISIBLE) setMenuOpen(false)
+        else if (bindingEditMode) cancelBindingEdit()
         else if (settingsVisible) showPage(hid.isConnected())
         else super.onBackPressed()
     }
 
-    private fun handleKey(key: KleLayout.Key) {
-        val binding = bindingFor(key)
-        if (binding == null) { toast("このキーを長押しして割り当ててください"); return }
-        if (binding.modifier != 0) {
+    private fun handleKey(key: KleLayout.Key, layer: Int = activeLayer) {
+        val binding = bindingFor(key, layer)
+        if (binding == null) { toast("メニューのキー割り当て編集で設定してください"); return }
+        when (binding.layerAction) {
+            LayerAction.BASE -> { setActiveLayer(0); return }
+            LayerAction.TOGGLE -> {
+                val target = if (activeLayer == binding.layer) 0 else binding.layer
+                setActiveLayer(target)
+                if (target != 0) markLayerKeyActive(key.index)
+                return
+            }
+            LayerAction.CYCLE -> {
+                setActiveLayer((activeLayer + 1) % 3)
+                if (activeLayer != 0) markLayerKeyActive(key.index)
+                return
+            }
+            LayerAction.ONE_SHOT -> {
+                val previous = activeLayer
+                val previousKey = activeLayerKeyIndex
+                setActiveLayer(binding.layer)
+                oneShotReturnLayer = if (previous == binding.layer) 0 else previous
+                oneShotReturnKeyIndex = if (previous == binding.layer) null else previousKey
+                markLayerKeyActive(key.index)
+                updateLayerIndicator()
+                return
+            }
+            LayerAction.MOMENTARY -> return // Handled by touch down and release.
+            LayerAction.NONE -> Unit
+        }
+        if (binding.modifier != 0 && binding.code == 0) {
             if (settings.stickyModifiers()) modifiers = modifiers xor binding.modifier
             else hid.key(binding.modifier, 0)
         } else {
-            hid.key(if (settings.stickyModifiers()) modifiers else 0, binding.code)
+            if (binding.consumerUsage != 0) hid.consumer(binding.consumerUsage)
+            else hid.key((if (settings.stickyModifiers()) modifiers else 0) or binding.modifier, binding.code)
             modifiers = 0
+            oneShotReturnLayer?.let { previous ->
+                val previousKey = oneShotReturnKeyIndex
+                setActiveLayer(previous)
+                markLayerKeyActive(previousKey)
+            }
         }
         keyboardView?.setActiveModifiers(modifiers)
     }
 
-    private fun bindingFor(key: KleLayout.Key): KeyBinding? =
-        KeyBinding.named(overrides.optString(key.index.toString(), "")) ?: KeyBinding.forKey(key)
+    private fun beginMomentaryLayer(key: KleLayout.Key) {
+        val binding = bindingFor(key) ?: return
+        if (binding.layerAction != LayerAction.MOMENTARY) return
+        val previous = activeLayer
+        val previousKey = activeLayerKeyIndex
+        setActiveLayer(binding.layer)
+        momentaryPreviousLayer = previous
+        momentaryPreviousKeyIndex = previousKey
+        momentaryTargetLayer = binding.layer
+        markLayerKeyActive(key.index)
+    }
 
-    private fun editBinding(key: KleLayout.Key) {
+    private fun endMomentaryLayer() {
+        val previous = momentaryPreviousLayer
+        val previousKey = momentaryPreviousKeyIndex
+        val target = momentaryTargetLayer
+        momentaryPreviousLayer = null
+        momentaryPreviousKeyIndex = null
+        momentaryTargetLayer = null
+        if (previous != null && activeLayer == target) {
+            setActiveLayer(previous)
+            markLayerKeyActive(previousKey)
+        }
+    }
+
+    private fun setActiveLayer(layer: Int) {
+        activeLayer = layer.coerceIn(0, 2)
+        activeLayerKeyIndex = null
+        oneShotReturnLayer = null
+        oneShotReturnKeyIndex = null
+        momentaryPreviousLayer = null
+        momentaryPreviousKeyIndex = null
+        momentaryTargetLayer = null
+        modifiers = 0
+        keyboardView?.setActiveModifiers(0)
+        keyboardView?.setLayer(activeLayer)
+        updateLayerIndicator()
+    }
+
+    private fun markLayerKeyActive(index: Int?) {
+        activeLayerKeyIndex = index
+        keyboardView?.invalidate()
+    }
+
+    private fun updateLayerIndicator() {
+        layerIndicator?.text = "L$activeLayer${if (oneShotReturnLayer != null) "・1回" else ""}"
+        layerIndicator?.contentDescription = "現在のレイヤー $activeLayer${if (oneShotReturnLayer != null) "、次の1キーだけ" else ""}"
+    }
+
+    private fun layerMappings(layer: Int): JSONObject? =
+        if (layer == 0) overrides else layerOverrides.optJSONObject(layer.toString())
+
+    private fun displayedLayer(): Int = if (bindingEditMode) bindingEditLayer else activeLayer
+
+    private fun bindingFor(key: KleLayout.Key, layer: Int = displayedLayer()): KeyBinding? {
+        val index = key.index.toString()
+        if (layer != 0) {
+            KeyBinding.named(layerMappings(layer)?.optString(index, "") ?: "")?.let { return it }
+        }
+        return KeyBinding.named(overrides.optString(index, "")) ?: KeyBinding.forKey(key)
+    }
+
+    private fun hasLayerOverride(key: KleLayout.Key): Boolean =
+        layerMappings(displayedLayer())?.has(key.index.toString()) == true
+
+    private fun beginBindingEdit() {
+        bindingEditBaseSnapshot = overrides.toString()
+        bindingEditLayersSnapshot = layerOverrides.toString()
+        bindingEditLayer = activeLayer
+        bindingEditMode = true
+        keyboardViewState = keyboardView?.viewState()
+        showPage(hid.isConnected())
+    }
+
+    private fun selectBindingEditLayer(layer: Int) {
+        bindingEditLayer = layer.coerceIn(0, 2)
+        updateBindingLayerButtons()
+        keyboardView?.setLayer(bindingEditLayer)
+    }
+
+    private fun updateBindingLayerButtons() {
+        bindingLayerButtons.forEachIndexed { index, control ->
+            control.alpha = if (index == bindingEditLayer) 1f else .55f
+            control.contentDescription = "レイヤー $index${if (index == bindingEditLayer) "、編集中" else ""}"
+        }
+    }
+
+    private fun saveBindingEdit() {
+        saveOverrides()
+        bindingEditMode = false
+        bindingEditBaseSnapshot = null
+        bindingEditLayersSnapshot = null
+        keyboardViewState = keyboardView?.viewState()
+        showPage(hid.isConnected())
+        toast("キー割り当てを保存しました")
+    }
+
+    private fun cancelBindingEditDraft() {
+        overrides = JSONObject(bindingEditBaseSnapshot ?: "{}")
+        layerOverrides = JSONObject(bindingEditLayersSnapshot ?: "{}")
+        bindingEditMode = false
+        bindingEditBaseSnapshot = null
+        bindingEditLayersSnapshot = null
+    }
+
+    private fun cancelBindingEdit() {
+        cancelBindingEditDraft()
+        keyboardViewState = keyboardView?.viewState()
+        showPage(hid.isConnected())
+    }
+
+    private fun editBindingForLayer(key: KleLayout.Key, layer: Int) {
         val options = KeyBinding.options()
         val names = options.map { it.name }.toTypedArray()
-        AlertDialog.Builder(this).setTitle("「${key.displayLabel()}」のキー割り当て")
+        val mappings = if (layer == 0) overrides else
+            (layerOverrides.optJSONObject(layer.toString()) ?: JSONObject().also {
+                layerOverrides.put(layer.toString(), it)
+            })
+        AlertDialog.Builder(this).setTitle("レイヤー$layer・「${key.displayLabel()}」の割り当て")
             .setItems(names) { _, which ->
-                try { overrides.put(key.index.toString(), options[which].name) }
+                try { mappings.put(key.index.toString(), options[which].name) }
                 catch (_: Exception) { return@setItems }
-                saveOverrides(); keyboardView?.invalidate()
+                keyboardView?.invalidate()
             }
-            .setNeutralButton("自動割り当て") { _, _ ->
-                overrides.remove(key.index.toString())
-                saveOverrides(); keyboardView?.invalidate()
+            .setNeutralButton(if (layer == 0) "自動割り当て" else "ベースを継承") { _, _ ->
+                mappings.remove(key.index.toString())
+                keyboardView?.invalidate()
             }
             .setNegativeButton("閉じる", null).show()
     }
@@ -511,14 +743,34 @@ class MainActivity : Activity() {
         var json = preferences.getString("kle_json", null)
         try {
             if (json == null) json = assets.open("default-kle.json").use(::readText)
+            else {
+                val upgraded = upgradeBundledLayout(json)
+                if (upgraded != json) {
+                    json = upgraded
+                    preferences.edit().putString("kle_json", upgraded).apply()
+                }
+            }
             layout = KleLayout.parse(requireNotNull(json))
             overrides = JSONObject(preferences.getString("overrides", "{}") ?: "{}")
+            layerOverrides = JSONObject(preferences.getString("layer_overrides", "{}") ?: "{}")
         } catch (_: Exception) {
             try {
                 layout = KleLayout.parse(assets.open("default-kle.json").use(::readText))
                 overrides = JSONObject()
+                layerOverrides = JSONObject()
             } catch (error: Exception) { throw IllegalStateException("標準レイアウトを読めません", error) }
         }
+    }
+
+    private fun upgradeBundledLayout(saved: String): String {
+        val normalized = saved.replace("\r\n", "\n").trim()
+        for ((oldAsset, newAsset) in listOf(
+            "legacy-ghosted-trackpad.json" to "ghosted-trackpad.json",
+            "legacy-default-kle.json" to "default-kle.json")) {
+            val old = assets.open(oldAsset).use(::readText).replace("\r\n", "\n").trim()
+            if (normalized == old) return assets.open(newAsset).use(::readText)
+        }
+        return saved
     }
 
     private fun openKlePicker() {
@@ -532,7 +784,7 @@ class MainActivity : Activity() {
 
     private fun chooseLayout() {
         AlertDialog.Builder(this).setTitle("レイアウトを選択")
-            .setItems(arrayOf("添付のGhostedレイアウト", "標準キーボード", "KLE JSONファイルを開く")) { _, which ->
+            .setItems(arrayOf("標準トラックパッド", "標準キーボード（TKL）", "KLE JSONファイルを開く")) { _, which ->
                 if (which == 2) openKlePicker()
                 else loadBundled(if (which == 0) "ghosted-trackpad.json" else "default-kle.json")
             }
@@ -557,10 +809,14 @@ class MainActivity : Activity() {
 
     private fun applyLayout(json: String) {
         val parsed = KleLayout.parse(json)
-        layout = parsed; overrides = JSONObject(); modifiers = 0
+        layout = parsed; overrides = JSONObject(); layerOverrides = JSONObject()
+        modifiers = 0; activeLayer = 0; activeLayerKeyIndex = null
+        oneShotReturnLayer = null; oneShotReturnKeyIndex = null
+        momentaryPreviousLayer = null; momentaryPreviousKeyIndex = null; momentaryTargetLayer = null
         settings.clearAutoKeyScalePx()
         keyboardViewState = null
-        preferences.edit().putString("kle_json", json).putString("overrides", "{}").apply()
+        preferences.edit().putString("kle_json", json).putString("overrides", "{}")
+            .putString("layer_overrides", "{}").apply()
         showPage(hid.isConnected())
         toast("${parsed.keys.size}キーのレイアウトを読み込みました")
     }
@@ -577,7 +833,10 @@ class MainActivity : Activity() {
         return output.toString(StandardCharsets.UTF_8.name())
     }
 
-    private fun saveOverrides() { preferences.edit().putString("overrides", overrides.toString()).apply() }
+    private fun saveOverrides() {
+        preferences.edit().putString("overrides", overrides.toString())
+            .putString("layer_overrides", layerOverrides.toString()).apply()
+    }
 
     private fun ensureReady() {
         if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED)
