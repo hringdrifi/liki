@@ -108,7 +108,6 @@ class MainActivity : Activity() {
             keyboardViewState = KleKeyboardView.ViewState(
                 state.getFloat("keyboard_zoom"), state.getFloat("keyboard_pan_x"), state.getFloat("keyboard_pan_y"))
         }
-        applyScreenOrientation()
         loadLayout()
         if (state?.getBoolean("binding_edit_mode") == true) {
             bindingEditMode = true
@@ -198,6 +197,7 @@ class MainActivity : Activity() {
         if (preserveKeyboardViewState) keyboardView?.let { keyboardViewState = it.viewState() }
         showingControls = connected
         settingsVisible = false
+        applyScreenOrientation()
         devices = null; connectionButton = null; keyboardView = null; layerIndicator = null
         bindingLayerButtons = emptyList()
         menuHandle = null; menuScrim = null; menuPanel = null
@@ -511,7 +511,7 @@ class MainActivity : Activity() {
     }
 
     private fun applyScreenOrientation() {
-        requestedOrientation = when (settings.screenOrientation()) {
+        requestedOrientation = when (if (showingControls) settings.screenOrientation() else 0) {
             1 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             2 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
