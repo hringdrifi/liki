@@ -761,22 +761,86 @@ class MainActivity : Activity() {
 
     private fun editBindingForLayer(key: KleLayout.Key, layer: Int) {
         val options = KeyBinding.options()
-        val names = options.map { it.name }.toTypedArray()
         val mappings = if (layer == 0) overrides else
             (layerOverrides.optJSONObject(layer.toString()) ?: JSONObject().also {
                 layerOverrides.put(layer.toString(), it)
             })
+        val categories = listOf(
+            "文字・数字" to options.filter { it.code in 4..39 && it.modifier == 0 },
+            "記号" to options.filter { it.code in 45..56 },
+            "基本キー" to options.filter { it.code in 40..44 || it.code == 57 },
+            "修飾キー付き" to emptyList(),
+            "メディアキー" to options.filter { it.consumerUsage != 0 },
+            "ファンクションキー" to options.filter { it.code in 58..72 },
+            "移動・編集" to options.filter { it.code in 73..82 || it.code == 101 },
+            "テンキー" to options.filter { it.code in 83..99 },
+            "修飾キー単体" to options.filter { it.code == 0 && it.modifier != 0 },
+            "ショートカット" to options.filter { it.code != 0 && it.modifier != 0 },
+            "レイヤー" to options.filter { it.layerAction != LayerAction.NONE }
+        )
         AlertDialog.Builder(this).setTitle("レイヤー$layer・「${key.displayLabel()}」の割り当て")
-            .setItems(names) { _, which ->
-                try { mappings.put(key.index.toString(), options[which].name) }
-                catch (_: Exception) { return@setItems }
-                keyboardView?.invalidate()
+            .setItems(categories.map { it.first }.toTypedArray()) { _, which ->
+                if (categories[which].first == "修飾キー付き") showModifierChoice(key, mappings)
+                else showBindingChoices(key, mappings, categories[which].first, categories[which].second)
             }
             .setNeutralButton(if (layer == 0) "自動割り当て" else "ベースを継承") { _, _ ->
                 mappings.remove(key.index.toString())
                 keyboardView?.invalidate()
             }
             .setNegativeButton("閉じる", null).show()
+    }
+
+    private fun showBindingChoices(key: KleLayout.Key, mappings: JSONObject, title: String,
+                                   options: List<KeyBinding>) {
+        AlertDialog.Builder(this).setTitle(title)
+            .setItems(options.map { it.name }.toTypedArray()) { _, which ->
+                setBinding(key, mappings, options[which].name)
+            }
+            .setNegativeButton("戻る") { _, _ -> editBindingForLayer(key, bindingEditLayer) }
+            .show()
+    }
+
+    private fun showModifierChoice(key: KleLayout.Key, mappings: JSONObject,
+                                   selected: List<String> = emptyList()) {
+        val modifiers = listOf("LCTL", "LSFT", "LALT", "LGUI", "RCTL", "RSFT", "RALT", "RGUI")
+            .filterNot { it in selected }
+        val title = if (selected.isEmpty()) "修飾キー付き"
+            else "修飾キー付き → ${selected.joinToString("+")}"
+        AlertDialog.Builder(this).setTitle(title)
+            .setItems(modifiers.toTypedArray()) { _, which ->
+                showModifierBaseChoice(key, mappings, selected + modifiers[which])
+            }
+            .setNegativeButton("戻る") { _, _ ->
+                if (selected.isEmpty()) editBindingForLayer(key, bindingEditLayer)
+                else showModifierBaseChoice(key, mappings, selected)
+            }
+            .show()
+    }
+
+    private fun showModifierBaseChoice(key: KleLayout.Key, mappings: JSONObject,
+                                       selected: List<String>) {
+        val bases = KeyBinding.options().filter {
+            it.code != 0 && it.modifier == 0 && it.consumerUsage == 0 &&
+                it.layerAction == LayerAction.NONE
+        }
+        val addModifier = selected.size < 8
+        val names = (if (addModifier) listOf("修飾キーを追加…") else emptyList()) + bases.map { it.name }
+        AlertDialog.Builder(this).setTitle("修飾キー付き → ${selected.joinToString("+")} → キー")
+            .setItems(names.toTypedArray()) { _, which ->
+                if (addModifier && which == 0) showModifierChoice(key, mappings, selected)
+                else {
+                    val base = bases[which - if (addModifier) 1 else 0]
+                    val expression = selected.foldRight(base.name) { modifier, inner -> "$modifier($inner)" }
+                    setBinding(key, mappings, expression)
+                }
+            }
+            .setNegativeButton("戻る") { _, _ -> showModifierChoice(key, mappings, selected.dropLast(1)) }
+            .show()
+    }
+
+    private fun setBinding(key: KleLayout.Key, mappings: JSONObject, name: String) {
+        mappings.put(key.index.toString(), name)
+        keyboardView?.invalidate()
     }
 
     private fun loadLayout() {

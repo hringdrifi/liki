@@ -125,7 +125,8 @@ internal class KleKeyboardView(
         val binding = listener.bindingFor(key)
         val overridden = listener.hasLayerOverride(key)
         val active = !key.ghost && (listener.isLayerKeyActive(key) ||
-            binding != null && binding.modifier != 0 && activeModifiers and binding.modifier != 0)
+            binding != null && binding.code == 0 && binding.modifier != 0 &&
+                activeModifiers and binding.modifier != 0)
         paint.style = Paint.Style.FILL
         paint.color = when {
             active -> Color.rgb(36, 115, 109)

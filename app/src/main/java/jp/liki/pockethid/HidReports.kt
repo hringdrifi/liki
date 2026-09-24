@@ -8,6 +8,10 @@ internal object HidReports {
     const val MOD_SHIFT = 0x02
     const val MOD_ALT = 0x04
     const val MOD_GUI = 0x08
+    const val MOD_RIGHT_CTRL = 0x10
+    const val MOD_RIGHT_SHIFT = 0x20
+    const val MOD_RIGHT_ALT = 0x40
+    const val MOD_RIGHT_GUI = 0x80
     const val KEY_ENTER = 0x28
     const val KEY_ESC = 0x29
     const val KEY_BACKSPACE = 0x2a

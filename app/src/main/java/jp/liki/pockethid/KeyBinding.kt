@@ -16,7 +16,8 @@ internal class KeyBinding private constructor(
         private val OPTIONS = buildOptions()
 
         @JvmStatic fun options(): List<KeyBinding> = OPTIONS
-        @JvmStatic fun named(name: String): KeyBinding? = OPTIONS.firstOrNull { it.name == name }
+        @JvmStatic fun named(name: String): KeyBinding? =
+            OPTIONS.firstOrNull { it.name == name } ?: modifierExpression(name)
 
         @JvmStatic fun forKey(key: KleLayout.Key): KeyBinding? {
             val preference = intArrayOf(4, 0, 6, 2, 3, 5, 7, 8, 1, 9, 10, 11)
@@ -51,12 +52,56 @@ internal class KeyBinding private constructor(
                 else -> null
             }
             if (standard != null) return named(standard)
+            modifierExpression(label)?.let { return it }
             OPTIONS.firstOrNull { it.name.equals(label.trim(), ignoreCase = true) }?.let { return it }
             if (label.length == 1) {
                 val key = HidReports.ascii(label[0])
                 if (key != null) return OPTIONS.firstOrNull { it.modifier == 0 && it.code == key[1] }
             }
             return null
+        }
+
+        private val modifierNames = mapOf(
+            "LCTL" to HidReports.MOD_CTRL, "LSFT" to HidReports.MOD_SHIFT,
+            "LALT" to HidReports.MOD_ALT, "LGUI" to HidReports.MOD_GUI,
+            "RCTL" to HidReports.MOD_RIGHT_CTRL, "RSFT" to HidReports.MOD_RIGHT_SHIFT,
+            "RALT" to HidReports.MOD_RIGHT_ALT, "RGUI" to HidReports.MOD_RIGHT_GUI
+        )
+
+        private fun modifierExpression(name: String): KeyBinding? {
+            var expression = name.trim()
+            var modifiers = 0
+            repeat(8) {
+                val open = expression.indexOf('(')
+                if (open <= 0 || !expression.endsWith(')')) return@repeat
+                val modifier = modifierNames[expression.substring(0, open).trim().uppercase(Locale.ROOT)]
+                    ?: return null
+                modifiers = modifiers or modifier
+                expression = expression.substring(open + 1, expression.length - 1).trim()
+            }
+            if (modifiers == 0 || expression.contains('(') || expression.contains(')')) return null
+            val base = qmkKey(expression) ?: OPTIONS.firstOrNull {
+                it.name.equals(expression, ignoreCase = true)
+            } ?: return null
+            if (base.code == 0 || base.modifier != 0 || base.consumerUsage != 0 ||
+                base.layerAction != LayerAction.NONE) return null
+            return KeyBinding(name.trim(), base.code, modifiers)
+        }
+
+        private fun qmkKey(name: String): KeyBinding? {
+            val token = name.uppercase(Locale.ROOT).removePrefix("KC_")
+            val alias = when (token) {
+                "ENT" -> "Enter"; "ESC" -> "Esc"; "BSPC" -> "Backspace"
+                "SPC" -> "Space"; "CAPS" -> "Caps Lock"; "DEL" -> "Delete"
+                "INS" -> "Insert"; "PGUP" -> "Page Up"; "PGDN" -> "Page Down"
+                "RGHT" -> "Right"; "LEFT" -> "Left"; "DOWN" -> "Down"; "UP" -> "Up"
+                "MINS" -> "-"; "EQL" -> "="; "LBRC" -> "["; "RBRC" -> "]"
+                "BSLS" -> "\\"; "SCLN" -> ";"; "QUOT" -> "'"; "GRV" -> "`"
+                "COMM" -> ","; "DOT" -> "."; "SLSH" -> "/"
+                else -> token
+            }
+            return OPTIONS.firstOrNull { it.name.equals(alias, ignoreCase = true) &&
+                it.code != 0 && it.modifier == 0 && it.consumerUsage == 0 }
         }
 
         private fun buildOptions(): List<KeyBinding> = buildList {
