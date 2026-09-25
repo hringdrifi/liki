@@ -5,7 +5,10 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -107,9 +110,29 @@ class MainActivity : Activity() {
     private var keyboardViewState: KleKeyboardView.ViewState? = null
     private var modifiers = 0
     private var backCallback: OnBackInvokedCallback? = null
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
+                BluetoothAdapter.STATE_TURNING_OFF -> {
+                    if (::hid.isInitialized) {
+                        reconnectAddress = hid.connectedAddress() ?: reconnectAddress
+                        reconnectAttempted = false
+                    }
+                    if (::zmk.isInitialized) zmk.stop()
+                }
+                BluetoothAdapter.STATE_ON -> {
+                    reconnectAttempted = false
+                    if (::hid.isInitialized && hid.hasPermission()) hid.start()
+                    if (::zmk.isInitialized) startZmkIfEnabled()
+                    refreshDevices()
+                }
+            }
+        }
+    }
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
         preferences = getSharedPreferences("layout", MODE_PRIVATE)
         bifrostMode = preferences.getBoolean("bifrost_mode", true)
         savedLayouts = SavedLayoutStore(preferences)
@@ -246,6 +269,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        unregisterReceiver(bluetoothStateReceiver)
         if (Build.VERSION.SDK_INT >= 33) backCallback?.let {
             onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it)
         }

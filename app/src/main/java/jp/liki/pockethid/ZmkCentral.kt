@@ -62,6 +62,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
     private val scanner get() = adapter?.bluetoothLeScanner
     private val preferences = context.getSharedPreferences("zmk_central", Context.MODE_PRIVATE)
     private val peers = mutableMapOf<String, Peer>()
+    private val reconnectDelays = mutableMapOf<String, Long>()
     private var active = false
     private var scanning = false
     private val stopScanLater = Runnable { stopScan() }
@@ -105,6 +106,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         try { context.unregisterReceiver(bondReceiver) } catch (_: IllegalArgumentException) { }
         peers.values.toList().forEach(::closePeer)
         peers.clear()
+        reconnectDelays.clear()
         listener.status("Bifrost接続を停止しました")
     }
 
@@ -252,6 +254,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         if (status != BluetoothGatt.GATT_SUCCESS || value.size != 16) { fail(peer, "キー状態が不正です"); return }
         applyPositions(peer, value)
         peer.ready = true
+        reconnectDelays.remove(peer.device.address)
         val addresses = preferences.getStringSet("addresses", emptySet()).orEmpty() + peer.device.address
         preferences.edit().putStringSet("addresses", addresses).apply()
         listener.status("Bifrost ${readyCount()}/2 接続")
@@ -318,7 +321,17 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         if (peers.remove(peer.device.address) !== peer) return
         closePeer(peer)
         listener.status("$message (${readyCount()}/2)")
-        if (active) main.postDelayed({ scan() }, 1500)
+        if (active) {
+            val address = peer.device.address
+            if (peer.device.bondState == BluetoothDevice.BOND_BONDED) {
+                val delay = reconnectDelays[address] ?: 1500L
+                reconnectDelays[address] = (delay * 2).coerceAtMost(30000L)
+                main.postDelayed({
+                    if (active && !peers.containsKey(address)) connect(peer.device)
+                }, delay)
+            }
+            main.postDelayed({ scan() }, 1500)
+        }
     }
 
     private fun closePeer(peer: Peer) {
