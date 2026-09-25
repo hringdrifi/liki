@@ -142,15 +142,19 @@ internal class KleKeyboardView(
                     .1f, .1f, paint)
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = .018f
-            paint.color = if (!key.ghost && binding == null) Color.rgb(232, 124, 115)
-                else Color.rgb(101, 119, 137)
+            paint.color = settings.layerBorderColor(activeLayer)
             canvas.drawRoundRect(key.x + .025f, key.y + .025f, key.x + key.w - .025f,
                 key.y + key.h - .025f, .1f, .1f, paint)
+            if (key.x2 != 0f || key.y2 != 0f || key.w2 != key.w || key.h2 != key.h)
+                canvas.drawRoundRect(key.x + key.x2 + .025f, key.y + key.y2 + .025f,
+                    key.x + key.x2 + key.w2 - .025f, key.y + key.y2 + key.h2 - .025f,
+                    .1f, .1f, paint)
         }
         paint.style = Paint.Style.FILL
         paint.color = AppColors.TEXT
         paint.typeface = Typeface.DEFAULT_BOLD
-        val showBinding = !key.ghost && !settings.kleJsonKeyLabels()
+        val showBinding = !key.ghost &&
+            (!settings.kleJsonKeyLabels() || key.labels.all { it.isEmpty() })
         for (index in 0 until if (showBinding) 0 else 9) {
             val label = key.labels[index]
             if (label.isEmpty()) continue

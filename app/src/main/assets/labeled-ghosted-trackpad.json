@@ -14,21 +14,21 @@
       "y": 2,
       "g": false
     },
-    "",
-    "",
-    "",
-    ""
+    "Ctrl+Z",
+    "Ctrl+X",
+    "Ctrl+C",
+    "Ctrl+V"
   ],
   [
-    "",
-    "",
-    "",
-    ""
+    "Ctrl+Shift+Z",
+    "Ctrl+Y",
+    "Ctrl+A",
+    "Ctrl+S"
   ],
   [
-    "",
-    "",
-    "",
-    ""
+    "Mute",
+    "Volume Down",
+    "Volume Up",
+    "Enter"
   ]
 ]

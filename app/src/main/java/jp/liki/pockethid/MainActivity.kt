@@ -52,6 +52,7 @@ class MainActivity : Activity() {
         const val REQUEST_ADVERTISE = 3
         const val REQUEST_DISCOVERABLE = 4
         const val REQUEST_KLE = 5
+        const val CURRENT_BINDING_SCHEMA_VERSION = 1
     }
 
     private lateinit var hid: HidController
@@ -101,18 +102,19 @@ class MainActivity : Activity() {
         settings = AppSettings(this)
         applyKeepScreenOn()
         reconnectAddress = state?.getString("reconnect_address")
-        activeLayer = state?.getInt("active_layer", 0)?.coerceIn(0, 2) ?: 0
+        activeLayer = state?.getInt("active_layer", 0)?.coerceIn(0, 3) ?: 0
         activeLayerKeyIndex = state?.getInt("active_layer_key", -1)?.takeIf { it >= 0 }
-        oneShotReturnLayer = state?.getInt("one_shot_return_layer", -1)?.takeIf { it in 0..2 }
+        oneShotReturnLayer = state?.getInt("one_shot_return_layer", -1)?.takeIf { it in 0..3 }
         oneShotReturnKeyIndex = state?.getInt("one_shot_return_key", -1)?.takeIf { it >= 0 }
         if (state?.containsKey("keyboard_zoom") == true) {
             keyboardViewState = KleKeyboardView.ViewState(
                 state.getFloat("keyboard_zoom"), state.getFloat("keyboard_pan_x"), state.getFloat("keyboard_pan_y"))
         }
         loadLayout()
+        migrateBindingSchema()
         if (state?.getBoolean("binding_edit_mode") == true) {
             bindingEditMode = true
-            bindingEditLayer = state.getInt("binding_edit_layer", 0).coerceIn(0, 2)
+            bindingEditLayer = state.getInt("binding_edit_layer", 0).coerceIn(0, 3)
             bindingEditBaseSnapshot = state.getString("binding_edit_base_snapshot") ?: overrides.toString()
             bindingEditLayersSnapshot = state.getString("binding_edit_layers_snapshot") ?: layerOverrides.toString()
             try {
@@ -282,7 +284,7 @@ class MainActivity : Activity() {
         keyboard.setLayer(displayedLayer())
         if (bindingEditMode) {
             val layerRow = horizontal()
-            bindingLayerButtons = (0..2).map { layer ->
+            bindingLayerButtons = (0..3).map { layer ->
                 button("レイヤー $layer") { selectBindingEditLayer(layer) }.also { control ->
                     layerRow.addView(control, LinearLayout.LayoutParams(0, dp(44), 1f))
                 }
@@ -439,9 +441,10 @@ class MainActivity : Activity() {
             settings.setTouchVibration(enabled)
         }
         root.addView(section("キーボード"))
+        addLayerBorderColorSettings(root)
         addPitchSetting(root, currentPitchMm)
         addSetting(root, "KLE JSONファイルに従った表示",
-            "オン: どのレイヤーでもKLEの文字を表示。オフ: 有効なキー割り当て名を表示",
+            "オン: KLEの文字を表示し、空欄ならキー割り当て名を表示。オフ: 有効なキー割り当て名を表示",
             settings.kleJsonKeyLabels()) { _, enabled ->
             settings.setKleJsonKeyLabels(enabled)
         }
@@ -605,6 +608,79 @@ class MainActivity : Activity() {
     private fun pitchText(mm: Float): String =
         if (mm > 0 && mm.isFinite()) String.format(Locale.JAPAN, "約 %.1f mm", mm) else "取得できません"
 
+    private fun addLayerBorderColorSettings(root: LinearLayout) {
+        root.addView(label("レイヤーごとのボタン枠の色", 16, true).apply {
+            setPadding(0, dp(12), 0, dp(4))
+        })
+        for (layer in 0..3) {
+            val control = button("")
+            fun update() {
+                val color = settings.layerBorderColor(layer)
+                control.text = String.format(Locale.ROOT, "レイヤー %d の枠色  #%06X", layer, color and 0xffffff)
+                val swatch = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(color)
+                    setSize(dp(18), dp(18))
+                    setBounds(0, 0, dp(18), dp(18))
+                }
+                control.setCompoundDrawables(swatch, null, null, null)
+                control.compoundDrawablePadding = dp(10)
+            }
+            control.setOnClickListener { showLayerBorderColorChoices(layer, ::update) }
+            update()
+            root.addView(control, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+        }
+    }
+
+    private fun showLayerBorderColorChoices(layer: Int, onChanged: () -> Unit) {
+        val colors = listOf(
+            "グレー" to 0x657789, "青" to 0x71A9E8, "緑" to 0x80CBC4,
+            "黄" to 0xEDB369, "赤" to 0xE87C73, "紫" to 0xBE9CE7)
+        val names = colors.map { (name, color) ->
+            String.format(Locale.ROOT, "%s  #%06X", name, color)
+        } + "カスタム色を入力…"
+        AlertDialog.Builder(this).setTitle("レイヤー $layer の枠色")
+            .setItems(names.toTypedArray()) { _, which ->
+                if (which == colors.size) showCustomLayerBorderColor(layer, onChanged)
+                else {
+                    settings.setLayerBorderColor(layer, Color.rgb(
+                        colors[which].second shr 16 and 0xff,
+                        colors[which].second shr 8 and 0xff,
+                        colors[which].second and 0xff))
+                    onChanged()
+                }
+            }
+            .setNegativeButton("閉じる", null).show()
+    }
+
+    private fun showCustomLayerBorderColor(layer: Int, onChanged: () -> Unit) {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+            isSingleLine = true
+            setText(String.format(Locale.ROOT, "#%06X", settings.layerBorderColor(layer) and 0xffffff))
+            selectAll()
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("レイヤー $layer の枠色（#RRGGBB）")
+            .setView(input)
+            .setPositiveButton("保存", null)
+            .setNegativeButton("キャンセル", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val value = input.text.toString().trim()
+                if (!value.matches(Regex("#[0-9A-Fa-f]{6}"))) {
+                    input.error = "#RRGGBB形式で入力してください"
+                    return@setOnClickListener
+                }
+                settings.setLayerBorderColor(layer, Color.parseColor(value))
+                onChanged()
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
+    }
+
     private fun addSetting(root: LinearLayout, title: String, detail: String, enabled: Boolean,
         listener: CompoundButton.OnCheckedChangeListener) {
         val item = column().apply { setPadding(0, dp(8), 0, dp(12)) }
@@ -648,7 +724,7 @@ class MainActivity : Activity() {
                 return
             }
             LayerAction.CYCLE -> {
-                setActiveLayer((activeLayer + 1) % 3)
+                setActiveLayer((activeLayer + 1) % 4)
                 if (activeLayer != 0) markLayerKeyActive(key.index)
                 return
             }
@@ -707,7 +783,7 @@ class MainActivity : Activity() {
     }
 
     private fun setActiveLayer(layer: Int) {
-        activeLayer = layer.coerceIn(0, 2)
+        activeLayer = layer.coerceIn(0, 3)
         activeLayerKeyIndex = null
         oneShotReturnLayer = null
         oneShotReturnKeyIndex = null
@@ -740,7 +816,7 @@ class MainActivity : Activity() {
         if (layer != 0) {
             KeyBinding.named(layerMappings(layer)?.optString(index, "") ?: "")?.let { return it }
         }
-        return KeyBinding.named(overrides.optString(index, "")) ?: KeyBinding.forKey(key)
+        return KeyBinding.named(overrides.optString(index, ""))
     }
 
     private fun hasLayerOverride(key: KleLayout.Key): Boolean =
@@ -756,7 +832,7 @@ class MainActivity : Activity() {
     }
 
     private fun selectBindingEditLayer(layer: Int) {
-        bindingEditLayer = layer.coerceIn(0, 2)
+        bindingEditLayer = layer.coerceIn(0, 3)
         updateBindingLayerButtons()
         keyboardView?.setLayer(bindingEditLayer)
     }
@@ -817,7 +893,15 @@ class MainActivity : Activity() {
                 else showBindingChoices(key, mappings, categories[which].first, categories[which].second)
             }
             .setNeutralButton(if (layer == 0) "自動割り当て" else "ベースを継承") { _, _ ->
-                mappings.remove(key.index.toString())
+                val index = key.index.toString()
+                if (layer == 0) {
+                    val inferred = materializeBindings(currentKleJson, JSONObject()).optString(index)
+                    if (inferred.isNotEmpty()) mappings.put(index, inferred)
+                    else {
+                        mappings.remove(index)
+                        toast("このキーには自動割り当てできるラベルがありません")
+                    }
+                } else mappings.remove(index)
                 keyboardView?.invalidate()
             }
             .setNegativeButton("閉じる", null).show()
@@ -903,9 +987,58 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun migrateBindingSchema() {
+        var version = preferences.getInt("binding_schema_version", 0)
+        while (version < CURRENT_BINDING_SCHEMA_VERSION) {
+            when (version) {
+                0 -> migrateBindingsFromV0()
+                else -> error("未対応のキー割り当てデータ形式: $version")
+            }
+            version++
+            preferences.edit().putString("overrides", overrides.toString())
+                .putInt("binding_schema_version", version).apply()
+        }
+    }
+
+    private fun migrateBindingsFromV0() {
+        overrides = materializeBindings(currentKleJson, overrides)
+        for (saved in savedLayouts.all()) {
+            try {
+                val explicit = materializeBindings(saved.kleJson, JSONObject(saved.overrides))
+                if (explicit.toString() != saved.overrides)
+                    savedLayouts.save(saved.copy(overrides = explicit.toString()))
+            } catch (_: Exception) { /* Leave malformed saved layouts untouched. */ }
+        }
+    }
+
+    private fun materializeBindings(json: String, mappings: JSONObject): JSONObject {
+        val parsed = KleLayout.parse(json)
+        val normalized = json.replace("\r\n", "\n").trim()
+        val bundled = when {
+            listOf("ghosted-trackpad.json", "labeled-ghosted-trackpad.json",
+                "legacy-ghosted-trackpad.json").any { assetMatches(it, normalized) } -> BundledBindings.trackpad
+            listOf("default-kle.json", "legacy-default-kle.json")
+                .any { assetMatches(it, normalized) } -> BundledBindings.keyboard
+            else -> null
+        }
+        if (bundled != null && bundled.size == parsed.keys.size)
+            return BundledBindings.into(mappings, bundled)
+        for (key in parsed.keys) {
+            val index = key.index.toString()
+            if (!mappings.has(index)) KeyBinding.fromKleLabels(key)?.let {
+                mappings.put(index, it.name)
+            }
+        }
+        return mappings
+    }
+
+    private fun assetMatches(asset: String, normalized: String): Boolean =
+        assets.open(asset).use(::readText).replace("\r\n", "\n").trim() == normalized
+
     private fun upgradeBundledLayout(saved: String): String {
         val normalized = saved.replace("\r\n", "\n").trim()
         for ((oldAsset, newAsset) in listOf(
+            "labeled-ghosted-trackpad.json" to "ghosted-trackpad.json",
             "legacy-ghosted-trackpad.json" to "ghosted-trackpad.json",
             "legacy-default-kle.json" to "default-kle.json")) {
             val old = assets.open(oldAsset).use(::readText).replace("\r\n", "\n").trim()
@@ -1039,7 +1172,11 @@ class MainActivity : Activity() {
     }
 
     private fun loadBundled(asset: String) {
-        try { assets.open(asset).use { applyLayout(readText(it)) } }
+        try {
+            val bindings = if (asset == "ghosted-trackpad.json") BundledBindings.trackpad
+                else BundledBindings.keyboard
+            assets.open(asset).use { applyLayout(readText(it), bindings) }
+        }
         catch (error: Exception) { toast("レイアウトを読み込めません: ${error.message}") }
     }
 
@@ -1054,9 +1191,14 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun applyLayout(json: String) {
+    private fun applyLayout(json: String, bundledBindings: List<String>? = null) {
         val parsed = KleLayout.parse(json)
-        layout = parsed; overrides = JSONObject(); layerOverrides = JSONObject()
+        require(bundledBindings == null || bundledBindings.size == parsed.keys.size)
+        layout = parsed
+        overrides = if (bundledBindings != null)
+            BundledBindings.into(JSONObject(), bundledBindings)
+        else materializeBindings(json, JSONObject())
+        layerOverrides = JSONObject()
         currentKleJson = json
         selectedSavedLayoutName = null
         modifiers = 0; activeLayer = 0; activeLayerKeyIndex = null
@@ -1064,7 +1206,7 @@ class MainActivity : Activity() {
         momentaryPreviousLayer = null; momentaryPreviousKeyIndex = null; momentaryTargetLayer = null
         settings.clearAutoKeyScalePx()
         keyboardViewState = null
-        preferences.edit().putString("kle_json", json).putString("overrides", "{}")
+        preferences.edit().putString("kle_json", json).putString("overrides", overrides.toString())
             .putString("layer_overrides", "{}").remove("selected_saved_layout_name").apply()
         showPage(hid.isConnected(), preserveKeyboardViewState = false)
         toast("${parsed.keys.size}キーのレイアウトを読み込みました")

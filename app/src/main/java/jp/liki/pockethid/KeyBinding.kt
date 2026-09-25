@@ -19,13 +19,14 @@ internal class KeyBinding private constructor(
         @JvmStatic fun named(name: String): KeyBinding? =
             OPTIONS.firstOrNull { it.name == name } ?: modifierExpression(name)
 
-        @JvmStatic fun forKey(key: KleLayout.Key): KeyBinding? {
+        // Used when a KLE layout is imported or older saved layouts are migrated.
+        @JvmStatic fun fromKleLabels(key: KleLayout.Key): KeyBinding? {
             val preference = intArrayOf(4, 0, 6, 2, 3, 5, 7, 8, 1, 9, 10, 11)
             for (index in preference) forLabel(key.labels[index])?.let { return it }
             return null
         }
 
-        @JvmStatic fun forLabel(label: String?): KeyBinding? {
+        private fun forLabel(label: String?): KeyBinding? {
             if (label.isNullOrEmpty()) return null
             val normalized = label.trim().lowercase(Locale.ROOT)
             val standard = when (normalized) {
@@ -118,11 +119,14 @@ internal class KeyBinding private constructor(
             add(KeyBinding("レイヤー0へ戻る", 0, 0, 0, LayerAction.BASE))
             add(KeyBinding("レイヤー1切り替え", 0, 0, 1, LayerAction.TOGGLE))
             add(KeyBinding("レイヤー2切り替え", 0, 0, 2, LayerAction.TOGGLE))
+            add(KeyBinding("レイヤー3切り替え", 0, 0, 3, LayerAction.TOGGLE))
             add(KeyBinding("次のレイヤー", 0, 0, 0, LayerAction.CYCLE))
             add(KeyBinding("次の1キーだけレイヤー1", 0, 0, 1, LayerAction.ONE_SHOT))
             add(KeyBinding("次の1キーだけレイヤー2", 0, 0, 2, LayerAction.ONE_SHOT))
+            add(KeyBinding("次の1キーだけレイヤー3", 0, 0, 3, LayerAction.ONE_SHOT))
             add(KeyBinding("押している間レイヤー1", 0, 0, 1, LayerAction.MOMENTARY))
             add(KeyBinding("押している間レイヤー2", 0, 0, 2, LayerAction.MOMENTARY))
+            add(KeyBinding("押している間レイヤー3", 0, 0, 3, LayerAction.MOMENTARY))
             addCombo("Ctrl+Z", 29, HidReports.MOD_CTRL)
             addCombo("Ctrl+Shift+Z", 29, HidReports.MOD_CTRL or HidReports.MOD_SHIFT)
             addCombo("Ctrl+Y", 28, HidReports.MOD_CTRL)

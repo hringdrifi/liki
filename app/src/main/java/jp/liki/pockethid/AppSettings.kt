@@ -1,9 +1,22 @@
 package jp.liki.pockethid
 
 import android.content.Context
+import android.graphics.Color
 
 internal class AppSettings(context: Context) {
     private val preferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+    fun layerBorderColor(layer: Int): Int {
+        val defaults = intArrayOf(
+            Color.rgb(101, 119, 137), Color.rgb(128, 203, 196),
+            Color.rgb(237, 179, 105), Color.rgb(190, 156, 231))
+        val index = layer.coerceIn(0, 3)
+        return preferences.getInt("layer_border_color_$index", defaults[index])
+    }
+
+    fun setLayerBorderColor(layer: Int, color: Int) {
+        if (layer in 0..3) preferences.edit().putInt("layer_border_color_$layer", color).apply()
+    }
 
     fun stickyModifiers(): Boolean = preferences.getBoolean("sticky_modifiers", true)
     fun setStickyModifiers(enabled: Boolean) = save("sticky_modifiers", enabled)
