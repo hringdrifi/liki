@@ -21,6 +21,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
@@ -145,6 +146,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         activityVisible = true
+        applyFullscreen()
         if (::hid.isInitialized && hid.isBluetoothReady()) {
             hid.start()
             if (hid.isConnected()) { reconnectAddress = null; reconnectAttempted = false }
@@ -160,6 +162,11 @@ class MainActivity : Activity() {
         reconnectAttempted = false
         activityVisible = false
         super.onPause()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && showingControls && !settingsVisible && settings.fullscreenControls()) applyFullscreen()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -202,6 +209,7 @@ class MainActivity : Activity() {
         bindingLayerButtons = emptyList()
         menuHandle = null; menuScrim = null; menuPanel = null
         if (connected) showControls() else showConnection()
+        applyFullscreen()
         updateStatus()
     }
 
@@ -326,13 +334,13 @@ class MainActivity : Activity() {
             }
             true
         }
-        edgeZone.setOnClickListener { setMenuOpen(true) } // Accessibility action; touch taps are consumed above.
         menuHandle = edgeZone
         if (!bindingEditMode) root.addView(edgeZone,
             FrameLayout.LayoutParams(dp(24), dp(108), Gravity.END or Gravity.CENTER_VERTICAL))
-        if (!bindingEditMode && Build.VERSION.SDK_INT >= 29) root.post {
-            val top = (root.height - dp(108)) / 2
-            root.systemGestureExclusionRects = listOf(Rect(root.width - dp(24), top, root.width, top + dp(108)))
+        if (!bindingEditMode && Build.VERSION.SDK_INT >= 29) {
+            edgeZone.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+                view.systemGestureExclusionRects = listOf(Rect(0, 0, view.width, view.height))
+            }
         }
 
         val scrim = View(this).apply {
@@ -410,6 +418,7 @@ class MainActivity : Activity() {
         val root = column().apply { setPadding(dp(20), dp(16), dp(20), dp(28)) }
         scroll.addView(root)
         setInsetContentView(scroll)
+        applyFullscreen()
         root.addView(button("‹  操作画面に戻る") { showPage(hid.isConnected()) })
         root.addView(label("設定", 28, true).apply { setPadding(0, dp(20), 0, dp(4)) })
         root.addView(label("操作方法を切り替えます。変更はすぐに保存されます。", 14, false).apply {
@@ -418,6 +427,9 @@ class MainActivity : Activity() {
         root.addView(button("プライバシーポリシー") { showPrivacyPolicy() })
         root.addView(section("表示"))
         addOrientationSetting(root)
+        addSetting(root, "全画面表示", "接続後の操作画面でシステムバーを隠す。画面端からスワイプすると一時表示", settings.fullscreenControls()) { _, enabled ->
+            settings.setFullscreenControls(enabled)
+        }
         addSetting(root, "画面を常にON", "Likiを開いている間は自動消灯しない", settings.keepScreenOn()) { _, enabled ->
             settings.setKeepScreenOn(enabled)
             applyKeepScreenOn()
@@ -474,7 +486,7 @@ class MainActivity : Activity() {
     }
 
     private fun addOrientationSetting(root: LinearLayout) {
-        val options = arrayOf("自動（端末の設定に従う）", "縦向き", "横向き")
+        val options = arrayOf("自動（端末の設定に従う）", "縦向き", "横向き", "横向き（反対向き）")
         val item = column().apply { setPadding(0, dp(8), 0, dp(12)) }
         val choice = button("画面の向き: ${options[settings.screenOrientation()]}") {}
         choice.setOnClickListener {
@@ -514,6 +526,7 @@ class MainActivity : Activity() {
         requestedOrientation = when (if (showingControls) settings.screenOrientation() else 0) {
             1 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             2 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            3 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
             else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
@@ -521,6 +534,26 @@ class MainActivity : Activity() {
     private fun applyKeepScreenOn() {
         if (settings.keepScreenOn()) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private fun applyFullscreen() {
+        val enabled = showingControls && !settingsVisible && settings.fullscreenControls()
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.setDecorFitsSystemWindows(!enabled && Build.VERSION.SDK_INT < 35)
+            window.decorView.windowInsetsController?.apply {
+                if (enabled) {
+                    systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    hide(WindowInsets.Type.systemBars())
+                } else {
+                    show(WindowInsets.Type.systemBars())
+                }
+            }
+        } else {
+            window.decorView.systemUiVisibility = if (enabled) {
+                View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            } else 0
+        }
     }
 
     private fun addSpeedSetting(root: LinearLayout, title: String, speed: Float, save: (Float) -> Unit) {
@@ -1154,7 +1187,8 @@ class MainActivity : Activity() {
             .show()
     }
     private fun setInsetContentView(view: View) {
-        if (Build.VERSION.SDK_INT >= 35) {
+        if (Build.VERSION.SDK_INT >= 35 || (Build.VERSION.SDK_INT >= 30 && showingControls &&
+                !settingsVisible && settings.fullscreenControls())) {
             val left = view.paddingLeft
             val top = view.paddingTop
             val right = view.paddingRight

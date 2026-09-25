@@ -20,13 +20,16 @@ internal class AppSettings(context: Context) {
     fun keepScreenOn(): Boolean = preferences.getBoolean("keep_screen_on", false)
     fun setKeepScreenOn(enabled: Boolean) = save("keep_screen_on", enabled)
 
+    fun fullscreenControls(): Boolean = preferences.getBoolean("fullscreen_controls", false)
+    fun setFullscreenControls(enabled: Boolean) = save("fullscreen_controls", enabled)
+
     fun touchVibration(): Boolean = preferences.getBoolean("touch_vibration", false)
     fun setTouchVibration(enabled: Boolean) = save("touch_vibration", enabled)
 
-    // 0 follows the device setting; 1 and 2 lock portrait and landscape.
-    fun screenOrientation(): Int = preferences.getInt("screen_orientation", 0).coerceIn(0, 2)
+    // 0 follows the device setting; 1-3 lock portrait, landscape, or reverse landscape.
+    fun screenOrientation(): Int = preferences.getInt("screen_orientation", 0).coerceIn(0, 3)
     fun setScreenOrientation(orientation: Int) {
-        preferences.edit().putInt("screen_orientation", orientation.coerceIn(0, 2)).apply()
+        preferences.edit().putInt("screen_orientation", orientation.coerceIn(0, 3)).apply()
     }
 
     // Zero keeps the existing fit-to-screen behavior.
