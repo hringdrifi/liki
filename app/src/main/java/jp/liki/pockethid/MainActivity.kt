@@ -373,6 +373,18 @@ class MainActivity : Activity() {
             updateBifrostLayerButtons()
             content.addView(layerRow)
 
+            val keyRow = horizontal()
+            listOf(
+                "Esc" to HidReports.KEY_ESC,
+                "Backspace" to HidReports.KEY_BACKSPACE,
+                "Space" to HidReports.KEY_SPACE,
+                "Enter" to HidReports.KEY_ENTER
+            ).forEach { (name, code) ->
+                keyRow.addView(button(name) { hid.key(0, code) },
+                    LinearLayout.LayoutParams(0, dp(50), 1f))
+            }
+            content.addView(keyRow)
+
             val pcRow = horizontal()
             pcStatusMainView = label(statusText, 13, false).also {
                 pcRow.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
