@@ -78,6 +78,8 @@ class MainActivity : Activity() {
     private var zmkStatusMainView: TextView? = null
     private var pcStatusMainView: TextView? = null
     private var bifrostLayerButtons = emptyList<Button>()
+    private var bifrostBatteryView: TextView? = null
+    private val bifrostBattery = arrayOfNulls<Int>(2)
     private var bifrostMode = false
     private var syncingBifrostLayer = false
     private lateinit var zmk: ZmkCentral
@@ -176,6 +178,10 @@ class MainActivity : Activity() {
                     if (steps != 0) hid.scroll(-steps)
                 } else hid.mouseMove(x, y)
             }
+            override fun battery(side: Int, level: Int?) {
+                bifrostBattery[side] = level
+                updateBifrostBattery()
+            }
         })
         if (bifrostMode) loadBifrostTrackpad()
         showPage(false)
@@ -255,6 +261,7 @@ class MainActivity : Activity() {
         applyScreenOrientation()
         devices = null; connectionButton = null; keyboardView = null; layerIndicator = null
         zmkStatusView = null; zmkStatusMainView = null; pcStatusMainView = null
+        bifrostBatteryView = null
         bifrostLayerButtons = emptyList()
         bindingLayerButtons = emptyList()
         menuHandle = null; menuScrim = null; menuPanel = null
@@ -308,6 +315,10 @@ class MainActivity : Activity() {
             setOnCheckedChangeListener { _, checked -> setBifrostMode(checked) }
         })
         zmkStatusView = label(zmkStatus, 13, false).also { root.addView(it) }
+        if (bifrostMode) {
+            bifrostBatteryView = label("", 13, false).also { root.addView(it) }
+            updateBifrostBattery()
+        }
         root.addView(button("左右を再検索") { startZmkIfEnabled(forceScan = true) })
         root.addView(button("プライバシーポリシー") { showPrivacyPolicy() })
         refreshDevices()
@@ -364,6 +375,9 @@ class MainActivity : Activity() {
             peripheralRow.addView(button("左右を再検索") { zmk.scan() })
             content.addView(peripheralRow)
 
+            bifrostBatteryView = label("", 13, false).also { content.addView(it) }
+            updateBifrostBattery()
+
             val layerRow = horizontal()
             bifrostLayerButtons = listOf("BASE", "LOWER", "RAISE", "EXTRA").mapIndexed { index, name ->
                 button(name) { bifrostKeymap.setManualLayer(index) }.also {
@@ -372,18 +386,6 @@ class MainActivity : Activity() {
             }
             updateBifrostLayerButtons()
             content.addView(layerRow)
-
-            val keyRow = horizontal()
-            listOf(
-                "Esc" to HidReports.KEY_ESC,
-                "Backspace" to HidReports.KEY_BACKSPACE,
-                "Space" to HidReports.KEY_SPACE,
-                "Enter" to HidReports.KEY_ENTER
-            ).forEach { (name, code) ->
-                keyRow.addView(button(name) { hid.key(0, code) },
-                    LinearLayout.LayoutParams(0, dp(50), 1f))
-            }
-            content.addView(keyRow)
 
             val pcRow = horizontal()
             pcStatusMainView = label(statusText, 13, false).also {
@@ -472,8 +474,8 @@ class MainActivity : Activity() {
         }
         panel.addView(actionScroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        actions.addView(menuAction("キー割り当てを編集") { setMenuOpen(false); beginBindingEdit() })
         if (!bifrostMode) {
-            actions.addView(menuAction("キー割り当てを編集") { setMenuOpen(false); beginBindingEdit() })
             actions.addView(menuAction("レイアウトを選択") { setMenuOpen(false); chooseLayout() })
         } else {
             actions.addView(menuAction("Bifrost レイヤー") {
@@ -928,6 +930,11 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun updateBifrostBattery() {
+        fun text(side: Int) = bifrostBattery[side]?.let { "$it%" } ?: "--"
+        bifrostBatteryView?.text = "電池  左 ${text(0)}   右 ${text(1)}"
+    }
+
     private fun layerMappings(layer: Int): JSONObject? =
         if (layer == 0) overrides else layerOverrides.optJSONObject(layer.toString())
 
@@ -1113,8 +1120,12 @@ class MainActivity : Activity() {
         val json = assets.open("bifrost-central-trackpad.json").use(::readText)
         currentKleJson = json
         layout = KleLayout.parse(json)
-        overrides = JSONObject()
-        layerOverrides = JSONObject()
+        val saved = try { JSONObject(preferences.getString("bifrost_overrides", "{}") ?: "{}") }
+            catch (_: Exception) { JSONObject() }
+        overrides = BundledBindings.into(saved,
+            listOf("", "Esc", "Backspace", "Space", "Enter"))
+        layerOverrides = try { JSONObject(preferences.getString("bifrost_layer_overrides", "{}") ?: "{}") }
+            catch (_: Exception) { JSONObject() }
         selectedSavedLayoutName = null
         activeLayer = 0
         keyboardViewState = null
@@ -1388,8 +1399,9 @@ class MainActivity : Activity() {
     }
 
     private fun saveOverrides() {
-        preferences.edit().putString("overrides", overrides.toString())
-            .putString("layer_overrides", layerOverrides.toString()).apply()
+        val prefix = if (bifrostMode) "bifrost_" else ""
+        preferences.edit().putString("${prefix}overrides", overrides.toString())
+            .putString("${prefix}layer_overrides", layerOverrides.toString()).apply()
     }
 
     private fun ensureReady() {

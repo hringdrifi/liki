@@ -3,5 +3,12 @@
   [
     { "g": true, "a": 7, "w": 4, "h": 3 },
     ""
+  ],
+  [
+    { "y": 2, "g": false },
+    "Esc",
+    "Backspace",
+    "Space",
+    "Enter"
   ]
 ]

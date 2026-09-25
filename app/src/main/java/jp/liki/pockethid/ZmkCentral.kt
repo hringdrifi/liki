@@ -32,12 +32,15 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         fun status(message: String)
         fun position(position: Int, pressed: Boolean)
         fun motion(x: Int, y: Int)
+        fun battery(side: Int, level: Int?)
     }
 
     companion object {
         private val SERVICE = UUID.fromString("00000000-0096-7107-c967-c5cfb1c2482a")
         private val POSITIONS = UUID.fromString("00000001-0096-7107-c967-c5cfb1c2482a")
         private val INPUT = UUID.fromString("00000006-0096-7107-c967-c5cfb1c2482a")
+        private val BATTERY_SERVICE = UUID.fromString("0000180f-0000-1000-8000-00805f9b34fb")
+        private val BATTERY_LEVEL = UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb")
         private val CCC = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
 
@@ -45,6 +48,9 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         var gatt: BluetoothGatt? = null
         var positions: BluetoothGattCharacteristic? = null
         var input: BluetoothGattCharacteristic? = null
+        var battery: BluetoothGattCharacteristic? = null
+        var side: Int? = null
+        var batteryLevel: Int? = null
         var state = ByteArray(16)
         var ready = false
         var x = 0
@@ -125,6 +131,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
     private fun connect(device: BluetoothDevice) {
         if (!active || peers.containsKey(device.address) || peers.size >= 2) return
         val peer = Peer(device)
+        peer.side = preferences.getInt("side_${device.address}", -1).takeIf { it in 0..1 }
         peers[device.address] = peer
         listener.status("Bifrostに接続中 (${readyCount()}/2)")
         try {
@@ -166,6 +173,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
                 val service = gatt.getService(SERVICE)
                 peer.positions = service?.getCharacteristic(POSITIONS)
                 peer.input = service?.getCharacteristic(INPUT)
+                peer.battery = gatt.getService(BATTERY_SERVICE)?.getCharacteristic(BATTERY_LEVEL)
                 if (peer.positions == null) { fail(peer, "ZMKペリフェラルではありません"); return@post }
                 when (peer.device.bondState) {
                     BluetoothDevice.BOND_BONDED -> configure(peer, gatt)
@@ -180,6 +188,10 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             main.post {
                 val peer = peers[gatt.device.address] ?: return@post
+                if (descriptor.characteristic.uuid == BATTERY_LEVEL) {
+                    peer.battery?.let(gatt::readCharacteristic)
+                    return@post
+                }
                 if (status != BluetoothGatt.GATT_SUCCESS) { fail(peer, "通知を有効にできません"); return@post }
                 if (descriptor.characteristic.uuid == POSITIONS && peer.input != null) {
                     if (!subscribe(gatt, peer.input!!)) fail(peer, "トラックボール通知を有効にできません")
@@ -191,12 +203,12 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
 
         override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             @Suppress("DEPRECATION") val value = characteristic.value
-            main.post { readPosition(gatt, characteristic, value, status) }
+            main.post { readCharacteristic(gatt, characteristic, value, status) }
         }
 
         override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic,
                                           value: ByteArray, status: Int) {
-            main.post { readPosition(gatt, characteristic, value, status) }
+            main.post { readCharacteristic(gatt, characteristic, value, status) }
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
@@ -229,9 +241,13 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         return gatt.writeDescriptor(descriptor)
     }
 
-    private fun readPosition(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic,
+    private fun readCharacteristic(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic,
                              value: ByteArray, status: Int) {
         val peer = peers[gatt.device.address] ?: return
+        if (characteristic.uuid == BATTERY_LEVEL) {
+            if (status == BluetoothGatt.GATT_SUCCESS) applyBattery(peer, value)
+            return
+        }
         if (characteristic.uuid != POSITIONS) return
         if (status != BluetoothGatt.GATT_SUCCESS || value.size != 16) { fail(peer, "キー状態が不正です"); return }
         applyPositions(peer, value)
@@ -239,6 +255,12 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         val addresses = preferences.getStringSet("addresses", emptySet()).orEmpty() + peer.device.address
         preferences.edit().putStringSet("addresses", addresses).apply()
         listener.status("Bifrost ${readyCount()}/2 接続")
+        peer.side?.let { listener.battery(it, peer.batteryLevel) }
+        peer.battery?.let { battery ->
+            if (battery.getDescriptor(CCC) != null) {
+                if (!subscribe(gatt, battery)) gatt.readCharacteristic(battery)
+            } else gatt.readCharacteristic(battery)
+        }
         if (readyCount() == 2) stopScan()
     }
 
@@ -247,14 +269,32 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         when (characteristic.uuid) {
             POSITIONS -> if (value.size == 16) applyPositions(peer, value)
             INPUT -> applyInput(peer, value)
+            BATTERY_LEVEL -> applyBattery(peer, value)
         }
+    }
+
+    private fun applyBattery(peer: Peer, value: ByteArray) {
+        val level = value.firstOrNull()?.toInt()?.and(0xff)?.takeIf { it <= 100 } ?: return
+        peer.batteryLevel = level
+        peer.side?.let { listener.battery(it, level) }
     }
 
     private fun applyPositions(peer: Peer, value: ByteArray) {
         for (position in 0..48) {
             val old = (peer.state[position / 8].toInt() shr (position % 8)) and 1
             val next = (value[position / 8].toInt() shr (position % 8)) and 1
-            if (old != next) listener.position(position, next != 0)
+            if (old != next) {
+                if (next != 0) {
+                    val side = if (position in 0..5 || position in 13..18 ||
+                        position in 25..30 || position in 38..43) 0 else 1
+                    if (peer.side != side) {
+                        peer.side = side
+                        preferences.edit().putInt("side_${peer.device.address}", side).apply()
+                        listener.battery(side, peer.batteryLevel)
+                    }
+                }
+                listener.position(position, next != 0)
+            }
         }
         peer.state = value.copyOf()
     }
@@ -283,6 +323,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
 
     private fun closePeer(peer: Peer) {
         applyPositions(peer, ByteArray(16))
+        peer.side?.let { listener.battery(it, null) }
         peer.gatt?.close()
         peer.gatt = null
     }
