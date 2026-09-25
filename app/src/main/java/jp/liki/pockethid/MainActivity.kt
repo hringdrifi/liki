@@ -75,6 +75,9 @@ class MainActivity : Activity() {
     private var statusText = "準備中…"
     private var zmkStatus = "未接続"
     private var zmkStatusView: TextView? = null
+    private var zmkStatusMainView: TextView? = null
+    private var pcStatusMainView: TextView? = null
+    private var bifrostLayerButtons = emptyList<Button>()
     private var bifrostMode = false
     private var syncingBifrostLayer = false
     private lateinit var zmk: ZmkCentral
@@ -106,7 +109,7 @@ class MainActivity : Activity() {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         preferences = getSharedPreferences("layout", MODE_PRIVATE)
-        bifrostMode = preferences.getBoolean("bifrost_mode", false)
+        bifrostMode = preferences.getBoolean("bifrost_mode", true)
         savedLayouts = SavedLayoutStore(preferences)
         settings = AppSettings(this)
         applyKeepScreenOn()
@@ -160,6 +163,7 @@ class MainActivity : Activity() {
             override fun status(message: String) {
                 zmkStatus = message
                 zmkStatusView?.text = message
+                zmkStatusMainView?.text = message
             }
             override fun position(position: Int, pressed: Boolean) {
                 bifrostKeymap.setPosition(position, pressed)
@@ -249,7 +253,9 @@ class MainActivity : Activity() {
         showingControls = connected
         settingsVisible = false
         applyScreenOrientation()
-        devices = null; connectionButton = null; keyboardView = null; layerIndicator = null; zmkStatusView = null
+        devices = null; connectionButton = null; keyboardView = null; layerIndicator = null
+        zmkStatusView = null; zmkStatusMainView = null; pcStatusMainView = null
+        bifrostLayerButtons = emptyList()
         bindingLayerButtons = emptyList()
         menuHandle = null; menuScrim = null; menuPanel = null
         if (connected) showControls() else showConnection()
@@ -325,9 +331,10 @@ class MainActivity : Activity() {
             }
             override fun onMomentaryDown(key: KleLayout.Key) = beginMomentaryLayer(key)
             override fun onMomentaryUp() = endMomentaryLayer()
-        })
+        }, forceFit = bifrostMode)
         keyboardView = keyboard
         keyboard.setLayout(layout)
+        if (bifrostMode) keyboard.contentDescription = "Bifrost トラックパッド"
         keyboardViewState?.let { keyboard.restoreViewState(it) }
         keyboardViewState = null
         keyboard.setActiveModifiers(if (bindingEditMode) 0 else modifiers)
@@ -349,7 +356,35 @@ class MainActivity : Activity() {
             content.addView(actions)
         }
         content.addView(keyboard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        if (!bindingEditMode) {
+        if (bifrostMode && !bindingEditMode) {
+            val peripheralRow = horizontal()
+            zmkStatusMainView = label(zmkStatus, 13, true).also {
+                peripheralRow.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            peripheralRow.addView(button("左右を再検索") { zmk.scan() })
+            content.addView(peripheralRow)
+
+            val layerRow = horizontal()
+            bifrostLayerButtons = listOf("BASE", "LOWER", "RAISE", "EXTRA").mapIndexed { index, name ->
+                button(name) { bifrostKeymap.setManualLayer(index) }.also {
+                    layerRow.addView(it, LinearLayout.LayoutParams(0, dp(50), 1f))
+                }
+            }
+            updateBifrostLayerButtons()
+            content.addView(layerRow)
+
+            val pcRow = horizontal()
+            pcStatusMainView = label(statusText, 13, false).also {
+                pcRow.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            pcRow.addView(button("PC切断") {
+                reconnectAddress = null
+                reconnectAttempted = false
+                hid.disconnect()
+            })
+            content.addView(pcRow)
+        }
+        if (!bindingEditMode && !bifrostMode) {
             val indicator = label("", 12, true).apply {
             setPadding(dp(8), dp(4), dp(8), dp(4))
             background = GradientDrawable().apply {
@@ -415,7 +450,7 @@ class MainActivity : Activity() {
             it.setPadding(0, dp(8), 0, dp(4))
             panel.addView(it)
         }
-        panel.addView(label(if (bifrostMode) "Bifrost + 標準トラックパッド" else selectedSavedLayoutName ?: layout.name, 13, false).apply {
+        panel.addView(label(if (bifrostMode) "Bifrost トラックパッド" else selectedSavedLayoutName ?: layout.name, 13, false).apply {
             setTextColor(AppColors.MUTED)
         })
         if (bifrostMode) zmkStatusView = label(zmkStatus, 12, false).also { panel.addView(it) }
@@ -858,6 +893,7 @@ class MainActivity : Activity() {
         keyboardView?.setActiveModifiers(0)
         keyboardView?.setLayer(activeLayer)
         updateLayerIndicator()
+        updateBifrostLayerButtons()
         if (bifrostMode && ::bifrostKeymap.isInitialized && !syncingBifrostLayer)
             bifrostKeymap.setManualLayer(activeLayer)
     }
@@ -870,6 +906,14 @@ class MainActivity : Activity() {
     private fun updateLayerIndicator() {
         layerIndicator?.text = "L$activeLayer${if (oneShotReturnLayer != null) "・1回" else ""}"
         layerIndicator?.contentDescription = "現在のレイヤー $activeLayer${if (oneShotReturnLayer != null) "、次の1キーだけ" else ""}"
+    }
+
+    private fun updateBifrostLayerButtons() {
+        val names = listOf("BASE", "LOWER", "RAISE", "EXTRA")
+        bifrostLayerButtons.forEachIndexed { index, control ->
+            control.text = if (activeLayer == index) "● ${names[index]}" else names[index]
+            control.setTextColor(if (activeLayer == index) AppColors.ACCENT else AppColors.TEXT)
+        }
     }
 
     private fun layerMappings(layer: Int): JSONObject? =
@@ -1054,10 +1098,10 @@ class MainActivity : Activity() {
     }
 
     private fun loadBifrostTrackpad() {
-        val json = assets.open("ghosted-trackpad.json").use(::readText)
+        val json = assets.open("bifrost-central-trackpad.json").use(::readText)
         currentKleJson = json
         layout = KleLayout.parse(json)
-        overrides = BundledBindings.into(JSONObject(), BundledBindings.trackpad)
+        overrides = JSONObject()
         layerOverrides = JSONObject()
         selectedSavedLayoutName = null
         activeLayer = 0
@@ -1421,6 +1465,7 @@ class MainActivity : Activity() {
         val connected = hid.isConnected()
         status.text = (if (connected) "● " else "○ ") + statusText
         status.setTextColor(if (connected) AppColors.ACCENT else AppColors.MUTED)
+        pcStatusMainView?.text = (if (connected) "PC ● " else "PC ○ ") + statusText
         connectionButton?.let { button ->
             val cancelling = hid.isCancelling()
             button.text = when {

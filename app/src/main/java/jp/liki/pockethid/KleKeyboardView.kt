@@ -16,7 +16,8 @@ internal class KleKeyboardView(
     context: Context,
     hid: HidController,
     private val settings: AppSettings,
-    private val listener: Listener
+    private val listener: Listener,
+    private val forceFit: Boolean = false
 ) : View(context) {
     data class ViewState(val zoom: Float, val panX: Float, val panY: Float)
 
@@ -97,12 +98,12 @@ internal class KleKeyboardView(
     private fun baseScale(): Float {
         if (keyboardLayout == null || width == 0 || height == 0) return 1f
         val pitchMm = settings.keyPitchMm()
-        if (pitchMm > 0) return pitchMm * horizontalDpi() / 25.4f
-        val savedScale = settings.autoKeyScalePx()
+        if (!forceFit && pitchMm > 0) return pitchMm * horizontalDpi() / 25.4f
+        val savedScale = if (forceFit) 0f else settings.autoKeyScalePx()
         if (savedScale > 0f) return savedScale
         val fittedScale = minOf((width - 20 * density) / maxOf(1f, maxX - minX),
             (height - 20 * density) / maxOf(1f, maxY - minY))
-        settings.setAutoKeyScalePx(fittedScale)
+        if (!forceFit) settings.setAutoKeyScalePx(fittedScale)
         return fittedScale
     }
     private fun scale(): Float = baseScale() * zoom

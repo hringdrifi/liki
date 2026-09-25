@@ -22,9 +22,9 @@ Pocket HIDとしてAndroidスマホをBluetooth HIDのキーボード兼マウ�
 
 ## Bifrost を左右のペリフェラルとして使う
 
-別リポジトリの [zmk-config-bifrost](https://github.com/hringdrifi/zmk-config-bifrost) の `codex/liki-peripheral` ブランチにある左右のUF2を使います。以前のペアリング情報が残っているとスマホから見つからないため、左右それぞれに `settings_reset` UF2を適用してから通常の左右UF2を適用してください。リセットするとBluetoothのペアリングなどの保存設定が消えます。
+別リポジトリの [zmk-config-bifrost の codex/liki-peripheral ブランチ](https://github.com/hringdrifi/zmk-config-bifrost/tree/codex/liki-peripheral) にある左右のUF2を使います。以前のペアリング情報が残っているとスマホから見つからないため、左右それぞれに `settings_reset` UF2を適用してから通常の左右UF2を適用してください。リセットするとBluetoothのペアリングなどの保存設定が消えます。
 
-Likiの接続画面で「スマホを中央として左右を接続」をオンにし、Bluetooth探索権限を許可します。左右のBifrostとスマホのペアリングを承認し、画面に `Bifrost 2/2 接続` と表示されることを確認します。PCとのペアリングと接続は通常どおり行います。PC接続後は標準トラックパッドを表示し、左右のキーと右のトラックボールの入力をPCへ送ります。左Shift位置と左親指の `LOWER` はレイヤー1、右Shift位置と右親指の `RAISE` はレイヤー2を押している間だけ有効にします。画面左上に現在のレイヤーを表示し、右端メニューから手動で選択したり、Bifrostを再検索したりできます。
+Likiの接続画面で「スマホを中央として左右を接続」をオンにし、Bluetooth探索権限を許可します。左右のBifrostとスマホのペアリングを承認し、画面に `Bifrost 2/2 接続` と表示されることを確認します。PCとのペアリングと接続は通常どおり行います。PC接続後はトラックパッド、接続状態、レイヤー選択、再検索、PC切断の操作だけを表示します。左右の物理キーは画面に描きません。左右のキーと右のトラックボールの入力はPCへ送ります。左Shift位置と左親指の `LOWER` はレイヤー1、右Shift位置と右親指の `RAISE` はレイヤー2を押している間だけ有効にします。
 
 このモードのキー割り当ては現時点でBifrostの共有キーマップに合わせてアプリ内に定義しています。`zmk-config-bifrost` 側のキーマップを変更した場合は、Liki側の [BifrostKeymap.kt](app/src/main/java/jp/liki/pockethid/BifrostKeymap.kt) も合わせて変更する必要があります。端末内の通常レイアウト設定は、Bifrostモードを終了すると復元されます。
 
