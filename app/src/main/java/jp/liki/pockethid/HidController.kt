@@ -27,6 +27,10 @@ internal class HidController(private val context: Context, private val settings:
     private var registering = false
     private var bootMode = false
     private var mouseButtons = 0
+    private val physicalKeys = mutableMapOf<Int, Pair<Int, Int>>()
+    private val physicalMouseButtons = mutableMapOf<Int, Int>()
+    private var tapModifiers = 0
+    private var tapCode = 0
     private val keyHandler = Handler(Looper.getMainLooper())
     private var nextKeyTime = 0L
     private val mouseHandler = Handler(Looper.getMainLooper())
@@ -65,6 +69,7 @@ internal class HidController(private val context: Context, private val settings:
             hid = null; host = null; connectingDevice = null; cancellingDevice = null
             restoringAfterCancel = false; registered = false; registering = false
             clearMouseMove()
+            clearPhysicalState()
             status("HIDサービスが切断されました")
         }
     }
@@ -98,6 +103,7 @@ internal class HidController(private val context: Context, private val settings:
                 BluetoothProfile.STATE_CONNECTED -> {
                     connectingDevice = null; host = device; bootMode = false; mouseButtons = 0
                     clearMouseMove()
+                    clearPhysicalState()
                     status("接続中: ${deviceName(device)}")
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -107,6 +113,7 @@ internal class HidController(private val context: Context, private val settings:
                     nextKeyTime = 0
                     if (host == device) host = null
                     mouseButtons = 0
+                    clearPhysicalState()
                     clearMouseMove()
                     status(if (failedAttempt) "接続できませんでした。再試行できます"
                         else "切断されました。接続を押して再試行できます")
@@ -126,9 +133,9 @@ internal class HidController(private val context: Context, private val settings:
             val service = hid ?: return
             val data = when {
                 type == BluetoothHidDevice.REPORT_TYPE_INPUT &&
-                    (id.toInt() == HidReports.KEYBOARD_ID || (bootMode && id.toInt() == 0)) -> HidReports.keyboard(0, 0)
+                    (id.toInt() == HidReports.KEYBOARD_ID || (bootMode && id.toInt() == 0)) -> keyboardReport()
                 type == BluetoothHidDevice.REPORT_TYPE_INPUT && id.toInt() == HidReports.MOUSE_ID ->
-                    HidReports.mouse(mouseButtons, 0, 0, 0)
+                    HidReports.mouse(allMouseButtons(), 0, 0, 0)
                 type == BluetoothHidDevice.REPORT_TYPE_INPUT && id.toInt() == HidReports.CONSUMER_ID ->
                     HidReports.consumer(0)
                 type == BluetoothHidDevice.REPORT_TYPE_OUTPUT && id.toInt() == HidReports.KEYBOARD_ID -> byteArrayOf(0)
@@ -138,7 +145,7 @@ internal class HidController(private val context: Context, private val settings:
         }
 
         override fun onVirtualCableUnplug(device: BluetoothDevice) {
-            host = null; mouseButtons = 0
+            host = null; mouseButtons = 0; clearPhysicalState()
             status("PC側でペアリングが解除されました")
         }
     }
@@ -188,14 +195,38 @@ internal class HidController(private val context: Context, private val settings:
         val pressAt = maxOf(SystemClock.uptimeMillis(), nextKeyTime)
         val releaseAt = pressAt + 18
         keyHandler.postAtTime({
-            if (destination == host) hid?.sendReport(destination,
-                if (bootMode) 0 else HidReports.KEYBOARD_ID, HidReports.keyboard(modifiers, code))
+            if (destination == host) {
+                tapModifiers = modifiers; tapCode = code
+                sendKeyboard()
+            }
         }, pressAt)
         keyHandler.postAtTime({
-            if (destination == host) hid?.sendReport(destination,
-                if (bootMode) 0 else HidReports.KEYBOARD_ID, HidReports.keyboard(0, 0))
+            if (destination == host) {
+                tapModifiers = 0; tapCode = 0
+                sendKeyboard()
+            }
         }, releaseAt)
         nextKeyTime = releaseAt + 12
+    }
+
+    fun physicalKey(position: Int, modifiers: Int, code: Int, pressed: Boolean) {
+        if (pressed) physicalKeys[position] = modifiers to code else physicalKeys.remove(position)
+        sendKeyboard()
+    }
+
+    private fun keyboardReport(): ByteArray {
+        val modifiers = physicalKeys.values.fold(tapModifiers) { acc, key -> acc or key.first }
+        val keys = physicalKeys.values.map { it.second } + tapCode
+        return HidReports.keyboardState(modifiers, keys)
+    }
+
+    private fun sendKeyboard() {
+        val destination = host ?: return
+        hid?.sendReport(destination, if (bootMode) 0 else HidReports.KEYBOARD_ID, keyboardReport())
+    }
+
+    private fun clearPhysicalState() {
+        physicalKeys.clear(); physicalMouseButtons.clear(); tapModifiers = 0; tapCode = 0
     }
 
     fun consumer(usage: Int) {
@@ -284,13 +315,14 @@ internal class HidController(private val context: Context, private val settings:
         keyHandler.postAtTime({
             if (destination == host) {
                 hid?.sendReport(destination, if (bootMode) 0 else HidReports.KEYBOARD_ID,
-                    HidReports.keyboard(HidReports.MOD_CTRL, 0))
+                    HidReports.keyboardState(HidReports.MOD_CTRL or
+                        physicalKeys.values.fold(0) { acc, key -> acc or key.first },
+                        physicalKeys.values.map { it.second }))
                 scroll(amount)
             }
         }, pressAt)
         keyHandler.postAtTime({
-            if (destination == host) hid?.sendReport(destination,
-                if (bootMode) 0 else HidReports.KEYBOARD_ID, HidReports.keyboard(0, 0))
+            if (destination == host) sendKeyboard()
         }, releaseAt)
         nextKeyTime = releaseAt + 12
     }
@@ -299,16 +331,25 @@ internal class HidController(private val context: Context, private val settings:
     fun releaseMouse(button: Int) { flushMouseMove(); mouseButtons = mouseButtons and button.inv(); sendMouse(0, 0, 0) }
     fun clickMouse(button: Int) { pressMouse(button); releaseMouse(button) }
 
+    fun physicalMouseButton(position: Int, button: Int, pressed: Boolean) {
+        flushMouseMove()
+        if (pressed) physicalMouseButtons[position] = button else physicalMouseButtons.remove(position)
+        sendMouse(0, 0, 0)
+    }
+
+    private fun allMouseButtons(): Int = physicalMouseButtons.values.fold(mouseButtons) { acc, button -> acc or button }
+
     private fun sendMouse(x: Int, y: Int, wheel: Int) {
         val destination = host ?: return
         val service = hid ?: return
-        val data = HidReports.mouse(mouseButtons, x, y, wheel)
+        val data = HidReports.mouse(allMouseButtons(), x, y, wheel)
         if (bootMode) service.sendReport(destination, 0, byteArrayOf(data[0], data[1], data[2]))
         else service.sendReport(destination, HidReports.MOUSE_ID, data)
     }
 
     fun close() {
         keyHandler.removeCallbacksAndMessages(null)
+        clearPhysicalState()
         clearMouseMove()
         val service = hid
         if (service != null) {

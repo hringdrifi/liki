@@ -52,6 +52,7 @@ class MainActivity : Activity() {
         const val REQUEST_ADVERTISE = 3
         const val REQUEST_DISCOVERABLE = 4
         const val REQUEST_KLE = 5
+        const val REQUEST_ZMK = 6
         const val CURRENT_BINDING_SCHEMA_VERSION = 1
     }
 
@@ -72,6 +73,13 @@ class MainActivity : Activity() {
     private var reconnectAddress: String? = null
     private var reconnectAttempted = false
     private var statusText = "準備中…"
+    private var zmkStatus = "未接続"
+    private var zmkStatusView: TextView? = null
+    private var bifrostMode = false
+    private var syncingBifrostLayer = false
+    private lateinit var zmk: ZmkCentral
+    private lateinit var bifrostKeymap: BifrostKeymap
+    private var trackballScrollRemainder = 0
     private lateinit var layout: KleLayout
     private lateinit var currentKleJson: String
     private var selectedSavedLayoutName: String? = null
@@ -98,6 +106,7 @@ class MainActivity : Activity() {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         preferences = getSharedPreferences("layout", MODE_PRIVATE)
+        bifrostMode = preferences.getBoolean("bifrost_mode", false)
         savedLayouts = SavedLayoutStore(preferences)
         settings = AppSettings(this)
         applyKeepScreenOn()
@@ -134,6 +143,37 @@ class MainActivity : Activity() {
                 else updateStatus()
             }
         }
+        bifrostKeymap = BifrostKeymap(object : BifrostKeymap.Output {
+            override fun key(position: Int, modifiers: Int, usage: Int, pressed: Boolean) {
+                hid.physicalKey(position, modifiers, usage, pressed)
+            }
+            override fun mouseButton(position: Int, button: Int, pressed: Boolean) {
+                hid.physicalMouseButton(position, button, pressed)
+            }
+            override fun scroll(amount: Int) { hid.scroll(amount) }
+            override fun layerChanged(layer: Int) {
+                syncingBifrostLayer = true
+                try { setActiveLayer(layer) } finally { syncingBifrostLayer = false }
+            }
+        })
+        zmk = ZmkCentral(this, object : ZmkCentral.Listener {
+            override fun status(message: String) {
+                zmkStatus = message
+                zmkStatusView?.text = message
+            }
+            override fun position(position: Int, pressed: Boolean) {
+                bifrostKeymap.setPosition(position, pressed)
+            }
+            override fun motion(x: Int, y: Int) {
+                if (bifrostKeymap.activeLayer == 1) {
+                    trackballScrollRemainder += y
+                    val steps = trackballScrollRemainder / 16
+                    trackballScrollRemainder %= 16
+                    if (steps != 0) hid.scroll(-steps)
+                } else hid.mouseMove(x, y)
+            }
+        })
+        if (bifrostMode) loadBifrostTrackpad()
         showPage(false)
         if (Build.VERSION.SDK_INT >= 33) {
             backCallback = OnBackInvokedCallback {
@@ -157,6 +197,7 @@ class MainActivity : Activity() {
             else updateStatus()
             refreshDevices()
         }
+        if (::zmk.isInitialized && hid.hasPermission()) startZmkIfEnabled()
     }
 
     override fun onPause() {
@@ -199,6 +240,7 @@ class MainActivity : Activity() {
             onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it)
         }
         if (::hid.isInitialized) hid.close()
+        if (::zmk.isInitialized) zmk.stop()
         super.onDestroy()
     }
 
@@ -207,7 +249,7 @@ class MainActivity : Activity() {
         showingControls = connected
         settingsVisible = false
         applyScreenOrientation()
-        devices = null; connectionButton = null; keyboardView = null; layerIndicator = null
+        devices = null; connectionButton = null; keyboardView = null; layerIndicator = null; zmkStatusView = null
         bindingLayerButtons = emptyList()
         menuHandle = null; menuScrim = null; menuPanel = null
         if (connected) showControls() else showConnection()
@@ -253,6 +295,14 @@ class MainActivity : Activity() {
         root.addView(label("接続すると操作画面へ切り替わります。PCから自動接続される場合もあります。", 13, false).apply {
             setPadding(0, dp(12), 0, 0)
         })
+        root.addView(section("Bifrost 分割キーボード"))
+        root.addView(Switch(this).apply {
+            text = "スマホを中央として左右を接続"
+            isChecked = bifrostMode
+            setOnCheckedChangeListener { _, checked -> setBifrostMode(checked) }
+        })
+        zmkStatusView = label(zmkStatus, 13, false).also { root.addView(it) }
+        root.addView(button("左右を再検索") { startZmkIfEnabled(forceScan = true) })
         root.addView(button("プライバシーポリシー") { showPrivacyPolicy() })
         refreshDevices()
     }
@@ -365,17 +415,31 @@ class MainActivity : Activity() {
             it.setPadding(0, dp(8), 0, dp(4))
             panel.addView(it)
         }
-        panel.addView(label(selectedSavedLayoutName ?: layout.name, 13, false).apply {
+        panel.addView(label(if (bifrostMode) "Bifrost + 標準トラックパッド" else selectedSavedLayoutName ?: layout.name, 13, false).apply {
             setTextColor(AppColors.MUTED)
         })
+        if (bifrostMode) zmkStatusView = label(zmkStatus, 12, false).also { panel.addView(it) }
         val actions = column()
         val actionScroll = ScrollView(this).apply {
             addView(actions)
         }
         panel.addView(actionScroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        actions.addView(menuAction("キー割り当てを編集") { setMenuOpen(false); beginBindingEdit() })
-        actions.addView(menuAction("レイアウトを選択") { setMenuOpen(false); chooseLayout() })
+        if (!bifrostMode) {
+            actions.addView(menuAction("キー割り当てを編集") { setMenuOpen(false); beginBindingEdit() })
+            actions.addView(menuAction("レイアウトを選択") { setMenuOpen(false); chooseLayout() })
+        } else {
+            actions.addView(menuAction("Bifrost レイヤー") {
+                setMenuOpen(false)
+                AlertDialog.Builder(this).setItems(arrayOf("BASE", "LOWER", "RAISE", "EXTRA")) { _, layer ->
+                    bifrostKeymap.setManualLayer(layer)
+                }.show()
+            })
+            actions.addView(menuAction("Bifrost を再検索") { setMenuOpen(false); zmk.scan() })
+        }
+        actions.addView(menuAction(if (bifrostMode) "Bifrost モードを終了" else "Bifrost モード") {
+            setMenuOpen(false); setBifrostMode(!bifrostMode)
+        })
         actions.addView(menuAction("表示をリセット") {
             setMenuOpen(false)
             settings.setKeyPitchMm(0f)
@@ -794,6 +858,8 @@ class MainActivity : Activity() {
         keyboardView?.setActiveModifiers(0)
         keyboardView?.setLayer(activeLayer)
         updateLayerIndicator()
+        if (bifrostMode && ::bifrostKeymap.isInitialized && !syncingBifrostLayer)
+            bifrostKeymap.setManualLayer(activeLayer)
     }
 
     private fun markLayerKeyActive(index: Int?) {
@@ -985,6 +1051,47 @@ class MainActivity : Activity() {
                 selectedSavedLayoutName = null
             } catch (error: Exception) { throw IllegalStateException("標準レイアウトを読めません", error) }
         }
+    }
+
+    private fun loadBifrostTrackpad() {
+        val json = assets.open("ghosted-trackpad.json").use(::readText)
+        currentKleJson = json
+        layout = KleLayout.parse(json)
+        overrides = BundledBindings.into(JSONObject(), BundledBindings.trackpad)
+        layerOverrides = JSONObject()
+        selectedSavedLayoutName = null
+        activeLayer = 0
+        keyboardViewState = null
+    }
+
+    private fun setBifrostMode(enabled: Boolean) {
+        if (bifrostMode == enabled) return
+        bifrostMode = enabled
+        preferences.edit().putBoolean("bifrost_mode", enabled).apply()
+        if (enabled) {
+            loadBifrostTrackpad()
+            startZmkIfEnabled()
+        } else {
+            zmk.stop()
+            bifrostKeymap.releaseAll()
+            bifrostKeymap.setManualLayer(0)
+            loadLayout()
+            zmkStatus = "未接続"
+        }
+        showPage(hid.isConnected(), preserveKeyboardViewState = false)
+    }
+
+    private fun startZmkIfEnabled(forceScan: Boolean = false) {
+        if (!bifrostMode || !::zmk.isInitialized) return
+        if (!zmk.hasPermission()) {
+            val required = if (Build.VERSION.SDK_INT >= 31)
+                arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
+            else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            requestPermissions(required.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.toTypedArray(), REQUEST_ZMK)
+            return
+        }
+        zmk.start()
+        if (forceScan) zmk.scan()
     }
 
     private fun migrateBindingSchema() {
@@ -1257,8 +1364,14 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, results)
         val granted = results.isNotEmpty() && results[0] == PackageManager.PERMISSION_GRANTED
         when (requestCode) {
-            REQUEST_CONNECT -> if (granted) ensureReady() else statusText = "Bluetooth接続権限が必要です"
+            REQUEST_CONNECT -> if (granted) { ensureReady(); startZmkIfEnabled() }
+                else statusText = "Bluetooth接続権限が必要です"
             REQUEST_ADVERTISE -> if (granted) requestDiscoverable() else toast("Bluetooth公開権限が必要です")
+            REQUEST_ZMK -> if (results.isNotEmpty() && results.all { it == PackageManager.PERMISSION_GRANTED })
+                startZmkIfEnabled() else {
+                zmkStatus = "Bifrost接続権限が必要です"
+                zmkStatusView?.text = zmkStatus
+            }
         }
         updateStatus()
     }

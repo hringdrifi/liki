@@ -52,6 +52,14 @@ internal object HidReports {
     @JvmStatic fun keyboard(modifiers: Int, key: Int): ByteArray =
         byteArrayOf(modifiers.toByte(), 0, key.toByte(), 0, 0, 0, 0, 0)
 
+    @JvmStatic fun keyboardState(modifiers: Int, keys: Collection<Int>): ByteArray =
+        ByteArray(8).also { report ->
+            report[0] = modifiers.toByte()
+            keys.filter { it != 0 }.distinct().take(6).forEachIndexed { index, key ->
+                report[index + 2] = key.toByte()
+            }
+        }
+
     @JvmStatic fun mouse(buttons: Int, x: Int, y: Int, wheel: Int): ByteArray =
         byteArrayOf(buttons.toByte(), x.toByte(), y.toByte(), wheel.toByte())
 
