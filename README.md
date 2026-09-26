@@ -6,9 +6,13 @@ Pocket HIDとしてAndroidスマホをBluetooth HIDのキーボード兼マウ�
 
 ## 動作条件
 
-- Android 9（API 28）以上で、端末が `BluetoothHidDevice` に対応していること
+- Android 9（API 28）以上で、端末が `BluetoothHidDevice` に対応し、OS側でBluetooth HID Deviceサービスが有効になっていること
 - Bluetooth HIDホストとしてペアリングできるPC（Windows、macOS、Linuxなど）
 - Androidはアプリが前面から外れるとHID登録を解除する場合があります。ホームからアプリへ戻ったとき、前回接続していたPCへの再接続を一度試みます。
+
+AndroidのバージョンとBluetooth搭載の条件を満たしていても、HID Deviceサービスが提供されていない、または無効になっている端末では使えません。HID Deviceは端末をキーボード・マウスとして使う機能で、外付けキーボードを接続するHID Hostとは別です。
+
+「HIDサービスを準備中…」のまま進まない場合は、端末側のHID Deviceサービスを利用できていない可能性があります。Fireタブレット（KFMAWI、Fire OSビルド `PS7331.4463N`）では、サービスに接続できず、ADBからの有効化もOSの権限で拒否されることを確認しています。通常の開発者オプションにはBluetooth HID Deviceサービスを有効にする設定はありません。
 
 ## 使い方
 
