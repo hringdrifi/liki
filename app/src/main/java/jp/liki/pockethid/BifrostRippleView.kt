@@ -12,6 +12,7 @@ import kotlin.math.hypot
 internal class BifrostRippleView(context: Context) : View(context) {
     private data class Ripple(val left: Boolean, val inward: Float, val row: Int, val started: Long)
     private val ripples = ArrayDeque<Ripple>()
+    private val durationMillis = 1600L
     private val density = resources.displayMetrics.density
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = AppColors.ACCENT
@@ -40,16 +41,15 @@ internal class BifrostRippleView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val now = SystemClock.uptimeMillis()
-        while (ripples.isNotEmpty() && now - ripples.first().started >= 700L) ripples.removeFirst()
+        while (ripples.isNotEmpty() && now - ripples.first().started >= durationMillis) ripples.removeFirst()
         val radiusLimit = hypot(width.toFloat(), height.toFloat()) * .65f
         for (ripple in ripples) {
-            val progress = ((now - ripple.started) / 700f).coerceIn(0f, 1f)
-            val offset = (4f + 24f * ripple.inward) * density
-            val x = if (ripple.left) offset else width - offset
+            val progress = ((now - ripple.started) / durationMillis.toFloat()).coerceIn(0f, 1f)
+            val offset = (48f - 24f * ripple.inward) * density
+            val x = if (ripple.left) -offset else width + offset
             val y = height * (.35f + .1f * ripple.row)
-            val expansion = 1f - (1f - progress) * (1f - progress)
             paint.alpha = (110f * (1f - progress) * (1f - progress)).toInt()
-            canvas.drawCircle(x, y, 8f * density + radiusLimit * expansion, paint)
+            canvas.drawCircle(x, y, offset + 8f * density + radiusLimit * progress, paint)
         }
         if (ripples.isNotEmpty()) postInvalidateOnAnimation()
     }
