@@ -22,6 +22,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.util.Log
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
@@ -63,6 +64,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
     private val preferences = context.getSharedPreferences("zmk_central", Context.MODE_PRIVATE)
     private val peers = mutableMapOf<String, Peer>()
     private val reconnectDelays = mutableMapOf<String, Long>()
+    private val loggedAdvertisements = mutableSetOf<String>()
     private var active = false
     private var scanning = false
     private val stopScanLater = Runnable { stopScan() }
@@ -91,9 +93,10 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         if (!active || scanning || peers.size >= 2 || !hasPermission()) return
         val bleScanner = scanner ?: run { listener.status("BLEスキャンを開始できません"); return }
         try {
-            val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE)).build())
+            val filters = emptyList<ScanFilter>()
             val options = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
             bleScanner.startScan(filters, options, scanCallback)
+            Log.i("LikiZmk", "BLE scan started, peers=${peers.size}")
             scanning = true
             listener.status("Bifrostを検索中 (${readyCount()}/2)")
             main.postDelayed(stopScanLater, 30000)
@@ -115,12 +118,19 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         if (!scanning) return
         scanning = false
         try { scanner?.stopScan(scanCallback) } catch (_: SecurityException) { }
-        if (active && readyCount() < 2) listener.status("Bifrost ${readyCount()}/2 接続。再検索できます")
+        if (active && readyCount() < 2) {
+            listener.status("Bifrost ${readyCount()}/2 接続。再検索します")
+            main.postDelayed({ scan() }, 1500)
+        }
     }
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            main.post { if (active) connect(result.device) }
+            val isSplit = result.scanRecord?.serviceUuids?.contains(ParcelUuid(SERVICE)) == true
+            if (loggedAdvertisements.add(result.device.address)) {
+                Log.i("LikiZmk", "BLE advertisement, name=${result.device.name}, bond=${result.device.bondState}, split=$isSplit")
+            }
+            if (isSplit) main.post { if (active) connect(result.device) }
         }
         override fun onScanFailed(errorCode: Int) {
             main.post {
@@ -132,13 +142,20 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
 
     private fun connect(device: BluetoothDevice) {
         if (!active || peers.containsKey(device.address) || peers.size >= 2) return
+        Log.i("LikiZmk", "GATT connect, bond=${device.bondState}")
         val peer = Peer(device)
         peer.side = preferences.getInt("side_${device.address}", -1).takeIf { it in 0..1 }
         peers[device.address] = peer
         listener.status("Bifrostに接続中 (${readyCount()}/2)")
         try {
-            peer.gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            val bonded = device.bondState == BluetoothDevice.BOND_BONDED
+            peer.gatt = device.connectGatt(context, bonded, gattCallback, BluetoothDevice.TRANSPORT_LE)
             if (peer.gatt == null) fail(peer, "接続を開始できません")
+            else main.postDelayed({
+                if (active && peers[device.address] === peer && !peer.ready) {
+                    fail(peer, "Bifrostの接続がタイムアウトしました")
+                }
+            }, if (bonded) 30000L else 45000L)
         } catch (_: SecurityException) { fail(peer, "Bluetooth接続権限を確認してください") }
     }
 
@@ -157,6 +174,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            Log.i("LikiZmk", "GATT state, status=$status state=$newState")
             main.post {
                 val peer = peers[gatt.device.address] ?: return@post
                 if (peer.gatt !== gatt) return@post
@@ -169,6 +187,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            Log.i("LikiZmk", "GATT services, status=$status")
             main.post {
                 val peer = peers[gatt.device.address] ?: return@post
                 if (status != BluetoothGatt.GATT_SUCCESS) { fail(peer, "ZMKサービスを取得できません"); return@post }
@@ -319,18 +338,20 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
 
     private fun fail(peer: Peer, message: String) {
         if (peers.remove(peer.device.address) !== peer) return
+        Log.w("LikiZmk", "GATT failed: $message, ready=${peer.ready}, bond=${peer.device.bondState}")
+        val wasReady = peer.ready
         closePeer(peer)
         listener.status("$message (${readyCount()}/2)")
         if (active) {
             val address = peer.device.address
             if (peer.device.bondState == BluetoothDevice.BOND_BONDED) {
-                val delay = reconnectDelays[address] ?: 1500L
+                val delay = reconnectDelays[address] ?: if (wasReady) 1500L else 15000L
                 reconnectDelays[address] = (delay * 2).coerceAtMost(30000L)
                 main.postDelayed({
                     if (active && !peers.containsKey(address)) connect(peer.device)
                 }, delay)
             }
-            main.postDelayed({ scan() }, 1500)
+            main.postDelayed({ scan() }, 250)
         }
     }
 
