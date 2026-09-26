@@ -79,9 +79,9 @@ class MainActivity : Activity() {
     private var zmkStatus = "未接続"
     private var zmkStatusView: TextView? = null
     private var zmkStatusMainView: TextView? = null
-    private var pcStatusMainView: TextView? = null
     private var bifrostLayerButtons = emptyList<Button>()
     private var bifrostBatteryView: TextView? = null
+    private var bifrostRippleView: BifrostRippleView? = null
     private val bifrostBattery = arrayOfNulls<Int>(2)
     private var bifrostMode = false
     private var syncingBifrostLayer = false
@@ -192,6 +192,7 @@ class MainActivity : Activity() {
             }
             override fun position(position: Int, pressed: Boolean) {
                 bifrostKeymap.setPosition(position, pressed)
+                if (pressed) bifrostRippleView?.press(position)
             }
             override fun motion(x: Int, y: Int) {
                 if (bifrostKeymap.activeLayer == 1) {
@@ -284,8 +285,10 @@ class MainActivity : Activity() {
         settingsVisible = false
         applyScreenOrientation()
         devices = null; connectionButton = null; keyboardView = null; layerIndicator = null
-        zmkStatusView = null; zmkStatusMainView = null; pcStatusMainView = null
+        zmkStatusView = null
+        zmkStatusMainView = null
         bifrostBatteryView = null
+        bifrostRippleView = null
         bifrostLayerButtons = emptyList()
         bindingLayerButtons = emptyList()
         menuHandle = null; menuScrim = null; menuPanel = null
@@ -340,7 +343,7 @@ class MainActivity : Activity() {
         })
         zmkStatusView = label(zmkStatus, 13, false).also { root.addView(it) }
         if (bifrostMode) {
-            bifrostBatteryView = label("", 13, false).also { root.addView(it) }
+            bifrostBatteryView = label("", 22, true).also { root.addView(it) }
             updateBifrostBattery()
         }
         root.addView(button("左右を再検索") { startZmkIfEnabled(forceScan = true) })
@@ -390,18 +393,19 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(0, dp(44), 1f))
             content.addView(actions)
         }
-        content.addView(keyboard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         if (bifrostMode && !bindingEditMode) {
+            bifrostBatteryView = label("", 22, true).also { content.addView(it) }
+            updateBifrostBattery()
+
             val peripheralRow = horizontal()
             zmkStatusMainView = label(zmkStatus, 13, true).also {
                 peripheralRow.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             }
             peripheralRow.addView(button("左右を再検索") { zmk.scan() })
             content.addView(peripheralRow)
-
-            bifrostBatteryView = label("", 13, false).also { content.addView(it) }
-            updateBifrostBattery()
-
+        }
+        content.addView(keyboard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        if (bifrostMode && !bindingEditMode) {
             val layerRow = horizontal()
             bifrostLayerButtons = listOf("BASE", "LOWER", "RAISE", "EXTRA").mapIndexed { index, name ->
                 button(name) { bifrostKeymap.setManualLayer(index) }.also {
@@ -411,16 +415,6 @@ class MainActivity : Activity() {
             updateBifrostLayerButtons()
             content.addView(layerRow)
 
-            val pcRow = horizontal()
-            pcStatusMainView = label(statusText, 13, false).also {
-                pcRow.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            }
-            pcRow.addView(button("PC切断") {
-                reconnectAddress = null
-                reconnectAttempted = false
-                hid.disconnect()
-            })
-            content.addView(pcRow)
         }
         if (!bindingEditMode && !bifrostMode) {
             val indicator = label("", 12, true).apply {
@@ -436,6 +430,13 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.TOP).apply {
                 leftMargin = dp(12); topMargin = dp(12)
             })
+        }
+
+        if (bifrostMode && !bindingEditMode) {
+            bifrostRippleView = BifrostRippleView(this).also {
+                root.addView(it, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            }
         }
 
         val edgeZone = FrameLayout(this)
@@ -1513,7 +1514,6 @@ class MainActivity : Activity() {
         val connected = hid.isConnected()
         status.text = (if (connected) "● " else "○ ") + statusText
         status.setTextColor(if (connected) AppColors.ACCENT else AppColors.MUTED)
-        pcStatusMainView?.text = (if (connected) "PC ● " else "PC ○ ") + statusText
         connectionButton?.let { button ->
             val cancelling = hid.isCancelling()
             button.text = when {
