@@ -84,9 +84,20 @@ class MainActivity : Activity() {
     private var bifrostRippleView: BifrostRippleView? = null
     private val bifrostBattery = arrayOfNulls<Int>(2)
     private var bifrostMode = false
+    private var relayMode = false
+    private lateinit var relay: BleHidRelay
+    private var relayStatus = "未接続"
+    private var relayStatusView: TextView? = null
+    private var relayKeysView: TextView? = null
+    private var relayKeyboardView: RelayKeyboardView? = null
+    private var relayLayout: StudioProtocol.Layout? = null
+    private var relayBindings = emptyList<StudioProtocol.Binding>()
+    private val relayDevices = linkedMapOf<String, BluetoothDevice>()
+    private var relayDeviceAdapter: android.widget.ArrayAdapter<String>? = null
     private var syncingBifrostLayer = false
     private lateinit var zmk: ZmkCentral
     private lateinit var bifrostKeymap: BifrostKeymap
+    private var zmkProfile: ZmkConfigImporter.Profile? = null
     private var trackballScrollRemainder = 0
     private lateinit var layout: KleLayout
     private lateinit var currentKleJson: String
@@ -119,6 +130,7 @@ class MainActivity : Activity() {
                         reconnectAttempted = false
                     }
                     if (::zmk.isInitialized) zmk.stop()
+                    if (::relay.isInitialized) relay.stop()
                 }
                 BluetoothAdapter.STATE_ON -> {
                     reconnectAttempted = false
@@ -134,7 +146,12 @@ class MainActivity : Activity() {
         super.onCreate(state)
         registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
         preferences = getSharedPreferences("layout", MODE_PRIVATE)
+        zmkProfile = preferences.getString("zmk_profile", null)?.let {
+            try { ZmkConfigImporter.fromJson(it) } catch (_: Exception) { null }
+        }
         bifrostMode = preferences.getBoolean("bifrost_mode", true)
+        relayMode = preferences.getBoolean("relay_mode", false)
+        if (relayMode) bifrostMode = false
         savedLayouts = SavedLayoutStore(preferences)
         settings = AppSettings(this)
         applyKeepScreenOn()
@@ -184,6 +201,10 @@ class MainActivity : Activity() {
                 try { setActiveLayer(layer) } finally { syncingBifrostLayer = false }
             }
         })
+        zmkProfile?.let { profile ->
+            try { bifrostKeymap.validate(profile); bifrostKeymap.useProfile(profile) }
+            catch (_: Exception) { zmkProfile = null }
+        }
         zmk = ZmkCentral(this, object : ZmkCentral.Listener {
             override fun status(message: String) {
                 zmkStatus = message
@@ -192,10 +213,10 @@ class MainActivity : Activity() {
             }
             override fun position(position: Int, pressed: Boolean) {
                 bifrostKeymap.setPosition(position, pressed)
-                if (pressed) bifrostRippleView?.press(position)
+                if (pressed && zmkProfile == null) bifrostRippleView?.press(position)
             }
             override fun motion(x: Int, y: Int) {
-                if (bifrostKeymap.activeLayer == 1) {
+                if (zmkProfile == null && bifrostKeymap.activeLayer == 1) {
                     trackballScrollRemainder += y
                     val steps = trackballScrollRemainder / 16
                     trackballScrollRemainder %= 16
@@ -205,6 +226,33 @@ class MainActivity : Activity() {
             override fun battery(side: Int, level: Int?) {
                 bifrostBattery[side] = level
                 updateBifrostBattery()
+            }
+        })
+        zmkProfile?.let { zmk.configurePositions(it.layers.first().size, it.leftPositions) }
+        relay = BleHidRelay(this, object : BleHidRelay.Listener {
+            override fun status(message: String) {
+                relayStatus = message
+                relayStatusView?.text = message
+            }
+            override fun found(device: BluetoothDevice) {
+                if (relayDevices.put(device.address, device) == null) {
+                    relayDeviceAdapter?.add("${device.name ?: "BLE HID"} (${device.address})")
+                }
+            }
+            override fun keyboard(modifiers: Int, usages: Set<Int>) {
+                hid.relayKeyboard(modifiers, usages)
+                relayKeyboardView?.setPressed(usages, modifiers)
+                relayKeysView?.text = if (usages.isEmpty() && modifiers == 0) "押下中: なし"
+                    else "押下中: " + usages.sorted().joinToString(" + ") { RelayKeyboardView.usageName(it) } +
+                        if (modifiers != 0) "  修飾: 0x${modifiers.toString(16)}" else ""
+            }
+            override fun consumer(usage: Int) { hid.relayConsumer(usage) }
+            override fun mouse(buttons: Int, x: Int, y: Int, wheel: Int) {
+                hid.relayMouse(buttons, x, y, wheel)
+            }
+            override fun studio(layout: StudioProtocol.Layout?, bindings: List<StudioProtocol.Binding>) {
+                relayLayout = layout; relayBindings = bindings
+                relayKeyboardView?.setKeyboard(layout, bindings)
             }
         })
         if (bifrostMode) loadBifrostTrackpad()
@@ -276,6 +324,7 @@ class MainActivity : Activity() {
         }
         if (::hid.isInitialized) hid.close()
         if (::zmk.isInitialized) zmk.stop()
+        if (::relay.isInitialized) relay.stop()
         super.onDestroy()
     }
 
@@ -287,12 +336,14 @@ class MainActivity : Activity() {
         devices = null; connectionButton = null; keyboardView = null; layerIndicator = null
         zmkStatusView = null
         zmkStatusMainView = null
+        relayStatusView = null; relayKeysView = null; relayKeyboardView = null
         bifrostBatteryView = null
         bifrostRippleView = null
         bifrostLayerButtons = emptyList()
         bindingLayerButtons = emptyList()
         menuHandle = null; menuScrim = null; menuPanel = null
-        if (connected) showControls() else showConnection()
+        if (connected && relayMode) showRelayControls()
+        else if (connected) showControls() else showConnection()
         applyFullscreen()
         updateStatus()
     }
@@ -335,20 +386,59 @@ class MainActivity : Activity() {
         root.addView(label("接続すると操作画面へ切り替わります。PCから自動接続される場合もあります。", 13, false).apply {
             setPadding(0, dp(12), 0, 0)
         })
-        root.addView(section("Bifrost 分割キーボード"))
+        root.addView(section("ZMK 分割キーボード"))
         root.addView(Switch(this).apply {
             text = "スマホを中央として左右を接続"
             isChecked = bifrostMode
             setOnCheckedChangeListener { _, checked -> setBifrostMode(checked) }
         })
         zmkStatusView = label(zmkStatus, 13, false).also { root.addView(it) }
+        root.addView(label(zmkProfile?.let { "設定: ${it.name} (${it.sourceUrl})" }
+            ?: "設定: 内蔵 Bifrost", 13, false))
+        root.addView(button("公開 zmk-config を読み込む") { promptZmkConfig() })
         if (bifrostMode) {
             bifrostBatteryView = label("", 22, true).also { root.addView(it) }
             updateBifrostBattery()
         }
         root.addView(button("左右を再検索") { startZmkIfEnabled(forceScan = true) })
+        root.addView(section("BLE HID 中継"))
+        root.addView(Switch(this).apply {
+            text = "BLE HID キーボードをPCへ中継"
+            isChecked = relayMode
+            setOnCheckedChangeListener { _, checked -> setRelayMode(checked) }
+        })
+        if (relayMode) {
+            relayStatusView = label(relayStatus, 13, false).also { root.addView(it) }
+            root.addView(button("BLE キーボードを選ぶ") { chooseRelayDevice() })
+        }
         root.addView(button("プライバシーポリシー") { showPrivacyPolicy() })
         refreshDevices()
+    }
+
+    private fun showRelayControls() {
+        val root = column().apply {
+            setBackgroundColor(AppColors.BACKGROUND)
+            setPadding(dp(16), dp(20), dp(16), dp(16))
+        }
+        setInsetContentView(root)
+        root.addView(label("BLE HID 中継", 26, true))
+        root.addView(label(statusText, 13, false).also { statusView = it })
+        relayStatusView = label(relayStatus, 15, true).also { root.addView(it) }
+        val actions = horizontal()
+        actions.addView(button("キーボードを選ぶ") { chooseRelayDevice() },
+            LinearLayout.LayoutParams(0, dp(52), 1f))
+        actions.addView(button("中継モードを終了") { setRelayMode(false) },
+            LinearLayout.LayoutParams(0, dp(52), 1f))
+        root.addView(actions)
+        relayKeysView = label("押下中: なし", 16, true).also { root.addView(it) }
+        val view = RelayKeyboardView(this)
+        relayKeyboardView = view
+        view.setKeyboard(relayLayout, relayBindings)
+        root.addView(view, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        if (relayLayout == null) root.addView(label(
+            "ZMK Studio 対応機では物理レイアウトを自動取得します。非対応機では押下中の HID キーを文字で表示します。",
+            13, false))
+        root.addView(button("PC との接続を切断") { hid.disconnect() })
     }
 
     private fun showControls() {
@@ -407,7 +497,7 @@ class MainActivity : Activity() {
         content.addView(keyboard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         if (bifrostMode && !bindingEditMode) {
             val layerRow = horizontal()
-            bifrostLayerButtons = listOf("BASE", "LOWER", "RAISE", "EXTRA").mapIndexed { index, name ->
+            bifrostLayerButtons = bifrostKeymap.layerNames.take(4).mapIndexed { index, name ->
                 button(name) { bifrostKeymap.setManualLayer(index) }.also {
                     layerRow.addView(it, LinearLayout.LayoutParams(0, dp(50), 1f))
                 }
@@ -489,7 +579,7 @@ class MainActivity : Activity() {
             it.setPadding(0, dp(8), 0, dp(4))
             panel.addView(it)
         }
-        panel.addView(label(if (bifrostMode) "Bifrost トラックパッド" else selectedSavedLayoutName ?: layout.name, 13, false).apply {
+        panel.addView(label(if (bifrostMode) "${zmkProfile?.name ?: "Bifrost"} トラックパッド" else selectedSavedLayoutName ?: layout.name, 13, false).apply {
             setTextColor(AppColors.MUTED)
         })
         if (bifrostMode) zmkStatusView = label(zmkStatus, 12, false).also { panel.addView(it) }
@@ -503,11 +593,20 @@ class MainActivity : Activity() {
         if (!bifrostMode) {
             actions.addView(menuAction("レイアウトを選択") { setMenuOpen(false); chooseLayout() })
         } else {
-            actions.addView(menuAction("Bifrost レイヤー") {
+            actions.addView(menuAction("ZMK レイヤー") {
                 setMenuOpen(false)
-                AlertDialog.Builder(this).setItems(arrayOf("BASE", "LOWER", "RAISE", "EXTRA")) { _, layer ->
+                AlertDialog.Builder(this).setItems(bifrostKeymap.layerNames.toTypedArray()) { _, layer ->
                     bifrostKeymap.setManualLayer(layer)
                 }.show()
+            })
+            actions.addView(menuAction("zmk-config を読み込む") { setMenuOpen(false); promptZmkConfig() })
+            if (zmkProfile != null) actions.addView(menuAction("内蔵 Bifrost 設定に戻す") {
+                setMenuOpen(false)
+                bifrostKeymap.useProfile(null)
+                zmk.configurePositions(49, emptySet())
+                zmkProfile = null
+                preferences.edit().remove("zmk_profile").apply()
+                showPage(hid.isConnected())
             })
             actions.addView(menuAction("Bifrost を再検索") { setMenuOpen(false); zmk.scan() })
         }
@@ -921,7 +1020,8 @@ class MainActivity : Activity() {
     }
 
     private fun setActiveLayer(layer: Int) {
-        activeLayer = layer.coerceIn(0, 3)
+        activeLayer = layer.coerceIn(0, if (bifrostMode && ::bifrostKeymap.isInitialized)
+            bifrostKeymap.layerNames.lastIndex else 3)
         activeLayerKeyIndex = null
         oneShotReturnLayer = null
         oneShotReturnKeyIndex = null
@@ -948,7 +1048,7 @@ class MainActivity : Activity() {
     }
 
     private fun updateBifrostLayerButtons() {
-        val names = listOf("BASE", "LOWER", "RAISE", "EXTRA")
+        val names = bifrostKeymap.layerNames
         bifrostLayerButtons.forEachIndexed { index, control ->
             control.text = if (activeLayer == index) "● ${names[index]}" else names[index]
             control.setTextColor(if (activeLayer == index) AppColors.ACCENT else AppColors.TEXT)
@@ -1158,6 +1258,11 @@ class MainActivity : Activity() {
 
     private fun setBifrostMode(enabled: Boolean) {
         if (bifrostMode == enabled) return
+        if (enabled && relayMode) {
+            relayMode = false
+            preferences.edit().putBoolean("relay_mode", false).apply()
+            relay.stop()
+        }
         bifrostMode = enabled
         preferences.edit().putBoolean("bifrost_mode", enabled).apply()
         if (enabled) {
@@ -1253,6 +1358,94 @@ class MainActivity : Activity() {
             putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "text/plain", "application/octet-stream"))
         }
         startActivityForResult(intent, REQUEST_KLE)
+    }
+
+    private fun setRelayMode(enabled: Boolean) {
+        if (relayMode == enabled) return
+        if (enabled && bifrostMode) {
+            bifrostMode = false
+            preferences.edit().putBoolean("bifrost_mode", false).apply()
+            zmk.stop()
+            bifrostKeymap.releaseAll()
+            bifrostKeymap.setManualLayer(0)
+            loadLayout()
+        }
+        relayMode = enabled
+        preferences.edit().putBoolean("relay_mode", enabled).apply()
+        if (!enabled) {
+            relay.stop()
+            relayStatus = "未接続"
+        }
+        showPage(hid.isConnected(), preserveKeyboardViewState = false)
+        if (enabled) chooseRelayDevice()
+    }
+
+    private fun chooseRelayDevice() {
+        if (!relay.hasPermission()) {
+            val required = if (Build.VERSION.SDK_INT >= 31)
+                arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
+            else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            requestPermissions(required.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.toTypedArray(), REQUEST_ZMK)
+            return
+        }
+        relayDevices.clear()
+        val adapter = android.widget.ArrayAdapter<String>(this,
+            android.R.layout.simple_list_item_1, mutableListOf())
+        relayDeviceAdapter = adapter
+        val dialog = AlertDialog.Builder(this).setTitle("BLE HID キーボードを選ぶ")
+            .setAdapter(adapter) { _, index ->
+                relayDevices.values.elementAtOrNull(index)?.let(relay::connect)
+                relayDeviceAdapter = null
+            }
+            .setNegativeButton("閉じる", null).create()
+        dialog.setOnDismissListener { relayDeviceAdapter = null; relay.stopScan() }
+        dialog.show()
+        relay.scan()
+    }
+
+    private fun promptZmkConfig() {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            isSingleLine = true
+            setText(zmkProfile?.sourceUrl ?: "https://github.com/hringdrifi/zmk-config-bifrost/tree/codex/liki-peripheral")
+            selectAll()
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("公開 zmk-config を読み込む")
+            .setMessage("GitHubのリポジトリまたはブランチのURLを入力してください。config/<keyboard>.json または info.json と共通 .keymap を読み込みます。")
+            .setView(input).setPositiveButton("読み込む", null)
+            .setNegativeButton("キャンセル", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val url = input.text.toString().trim()
+                if (url.isEmpty()) { input.error = "URLを入力してください"; return@setOnClickListener }
+                dialog.dismiss()
+                toast("GitHubから読み込み中…")
+                Thread {
+                    val result = runCatching { ZmkConfigImporter.load(url) }
+                    runOnUiThread {
+                        if (isFinishing || isDestroyed) return@runOnUiThread
+                        result.onSuccess { profile ->
+                            try {
+                                bifrostKeymap.validate(profile)
+                                bifrostKeymap.useProfile(profile)
+                                zmk.configurePositions(profile.layers.first().size, profile.leftPositions)
+                                zmkProfile = profile
+                                preferences.edit().putString("zmk_profile", profile.toJson()).apply()
+                                showPage(hid.isConnected())
+                                toast("${profile.name}: ${profile.layers.size}レイヤー、${profile.layers.first().size}キーを読み込みました")
+                            } catch (error: Exception) { showZmkImportError(error) }
+                        }.onFailure(::showZmkImportError)
+                    }
+                }.start()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun showZmkImportError(error: Throwable) {
+        AlertDialog.Builder(this).setTitle("zmk-configを読み込めません")
+            .setMessage(error.message ?: "不明なエラー")
+            .setPositiveButton("閉じる", null).show()
     }
 
     private fun chooseLayout() {
@@ -1460,9 +1653,12 @@ class MainActivity : Activity() {
             REQUEST_CONNECT -> if (granted) { ensureReady(); startZmkIfEnabled() }
                 else statusText = "Bluetooth接続権限が必要です"
             REQUEST_ADVERTISE -> if (granted) requestDiscoverable() else toast("Bluetooth公開権限が必要です")
-            REQUEST_ZMK -> if (results.isNotEmpty() && results.all { it == PackageManager.PERMISSION_GRANTED })
-                startZmkIfEnabled() else {
-                zmkStatus = "Bifrost接続権限が必要です"
+            REQUEST_ZMK -> if (results.isNotEmpty() && results.all { it == PackageManager.PERMISSION_GRANTED }) {
+                if (relayMode) chooseRelayDevice() else startZmkIfEnabled()
+            } else {
+                if (relayMode) relayStatus = "BLE 接続権限が必要です"
+                else zmkStatus = "ZMK接続権限が必要です"
+                relayStatusView?.text = relayStatus
                 zmkStatusView?.text = zmkStatus
             }
         }

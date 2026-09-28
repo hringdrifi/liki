@@ -19,7 +19,7 @@ internal class BifrostKeymap(private val output: Output) {
     }
 
     // Mirrors config/bifrost.keymap in zmk-config-bifrost. Keep both in sync.
-    private val layers = listOf(
+    private val defaultLayers = listOf(
         """TAB Q W E R T Y U I O P SQT BSLH
            ESC A S D F G H J K L SEMI RET
            MO1 Z X C V B N M COMMA DOT FSLH UP MO2
@@ -39,6 +39,28 @@ internal class BifrostKeymap(private val output: Output) {
     ).map { source ->
         source.trim().split(Regex("\\s+")).map(::parse).also { require(it.size == 49) }
     }
+    private var layers = defaultLayers
+    var layerNames = listOf("BASE", "LOWER", "RAISE", "EXTRA")
+        private set
+    val positionCount get() = layers.first().size
+
+    fun useProfile(profile: ZmkConfigImporter.Profile?) {
+        releaseAll()
+        manualLayer = 0
+        layers = profile?.layers?.map { row -> row.map(::parse) } ?: defaultLayers
+        layerNames = profile?.layerNames ?: listOf("BASE", "LOWER", "RAISE", "EXTRA")
+        refreshLayer()
+    }
+
+    fun validate(profile: ZmkConfigImporter.Profile) {
+        require(profile.layers.isNotEmpty() && profile.layers.size == profile.layerNames.size)
+        require(profile.layers.all { it.size == profile.layers.first().size })
+        profile.layers.flatten().filter { it.startsWith("MO") }.forEach { token ->
+            val target = token.drop(2).toIntOrNull()
+            require(target != null && target in profile.layers.indices) { "レイヤー $token がありません" }
+        }
+        profile.layers.forEach { row -> row.forEach(::parse) }
+    }
 
     private val held = mutableMapOf<Int, Action>()
     private val heldLayers = mutableMapOf<Int, Int>()
@@ -47,12 +69,12 @@ internal class BifrostKeymap(private val output: Output) {
         private set
 
     fun setManualLayer(layer: Int) {
-        manualLayer = layer.coerceIn(0, 3)
+        manualLayer = layer.coerceIn(0, layers.lastIndex)
         refreshLayer()
     }
 
     fun setPosition(position: Int, pressed: Boolean) {
-        if (position !in 0..48) return
+        if (position !in 0 until positionCount) return
         if (pressed) {
             if (held.containsKey(position)) return
             val action = resolve(position)
@@ -96,9 +118,11 @@ internal class BifrostKeymap(private val output: Output) {
 
     private fun parse(token: String): Action {
         if (token == "TRANS") return Action.Transparent
-        if (token == "STUDIO_UNLOCK") return Action.None
-        if (token == "MO1") return Action.Layer(1)
-        if (token == "MO2") return Action.Layer(2)
+        if (token == "STUDIO_UNLOCK" || token == "NONE") return Action.None
+        if (token.startsWith("MO") && token.drop(2).toIntOrNull() != null) {
+            val number = token.drop(2).toInt()
+            return Action.Layer(number)
+        }
         if (token.startsWith("MKP_")) return Action.Mouse(when (token) {
             "MKP_L" -> 1; "MKP_R" -> 2; "MKP_M" -> 4
             else -> error("Unknown mouse button $token")

@@ -17,7 +17,7 @@ internal class BifrostRippleView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = AppColors.ACCENT
         style = Paint.Style.STROKE
-        strokeWidth = 1.5f * density
+        strokeWidth = 2.5f * density
     }
 
     init {
@@ -48,7 +48,7 @@ internal class BifrostRippleView(context: Context) : View(context) {
             val offset = (48f - 24f * ripple.inward) * density
             val x = if (ripple.left) -offset else width + offset
             val y = height * (.35f + .1f * ripple.row)
-            paint.alpha = (110f * (1f - progress) * (1f - progress)).toInt()
+            paint.alpha = (220f * (1f - progress)).toInt()
             canvas.drawCircle(x, y, offset + 8f * density + radiusLimit * progress, paint)
         }
         if (ripples.isNotEmpty()) postInvalidateOnAnimation()

@@ -67,7 +67,19 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
     private val loggedAdvertisements = mutableSetOf<String>()
     private var active = false
     private var scanning = false
+    private var positionCount = 49
+    private var leftPositions: Set<Int> = emptySet()
+    private var customPositions = false
     private val stopScanLater = Runnable { stopScan() }
+
+    fun configurePositions(count: Int, left: Set<Int>) {
+        require(count in 1..128)
+        peers.values.forEach { peer -> applyPositions(peer, ByteArray(16)) }
+        positionCount = count
+        leftPositions = left
+        customPositions = count != 49 || left.isNotEmpty()
+        peers.values.forEach { it.side = null }
+    }
 
     fun hasPermission(): Boolean = if (Build.VERSION.SDK_INT >= 31) {
         context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
@@ -76,7 +88,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
 
     fun start() {
         if (active) { scan(); return }
-        if (!hasPermission()) { listener.status("BifrostのBluetooth権限が必要です"); return }
+        if (!hasPermission()) { listener.status("ZMKのBluetooth権限が必要です"); return }
         if (adapter?.isEnabled != true) { listener.status("Bluetoothをオンにしてください"); return }
         active = true
         context.registerReceiver(bondReceiver, IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
@@ -98,7 +110,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
             bleScanner.startScan(filters, options, scanCallback)
             Log.i("LikiZmk", "BLE scan started, peers=${peers.size}")
             scanning = true
-            listener.status("Bifrostを検索中 (${readyCount()}/2)")
+            listener.status("ZMKを検索中 (${readyCount()}/2)")
             main.postDelayed(stopScanLater, 30000)
         } catch (_: SecurityException) { listener.status("BLEスキャン権限を確認してください") }
     }
@@ -110,7 +122,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         peers.values.toList().forEach(::closePeer)
         peers.clear()
         reconnectDelays.clear()
-        listener.status("Bifrost接続を停止しました")
+        listener.status("ZMK接続を停止しました")
     }
 
     private fun stopScan() {
@@ -119,7 +131,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         scanning = false
         try { scanner?.stopScan(scanCallback) } catch (_: SecurityException) { }
         if (active && readyCount() < 2) {
-            listener.status("Bifrost ${readyCount()}/2 接続。再検索します")
+            listener.status("ZMK ${readyCount()}/2 接続。再検索します")
             main.postDelayed({ scan() }, 1500)
         }
     }
@@ -135,7 +147,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         override fun onScanFailed(errorCode: Int) {
             main.post {
                 scanning = false
-                listener.status("Bifrost検索エラー: $errorCode")
+                listener.status("ZMK検索エラー: $errorCode")
             }
         }
     }
@@ -146,14 +158,14 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         val peer = Peer(device)
         peer.side = preferences.getInt("side_${device.address}", -1).takeIf { it in 0..1 }
         peers[device.address] = peer
-        listener.status("Bifrostに接続中 (${readyCount()}/2)")
+        listener.status("ZMKに接続中 (${readyCount()}/2)")
         try {
             val bonded = device.bondState == BluetoothDevice.BOND_BONDED
             peer.gatt = device.connectGatt(context, bonded, gattCallback, BluetoothDevice.TRANSPORT_LE)
             if (peer.gatt == null) fail(peer, "接続を開始できません")
             else main.postDelayed({
                 if (active && peers[device.address] === peer && !peer.ready) {
-                    fail(peer, "Bifrostの接続がタイムアウトしました")
+                    fail(peer, "ZMKの接続がタイムアウトしました")
                 }
             }, if (bonded) 30000L else 45000L)
         } catch (_: SecurityException) { fail(peer, "Bluetooth接続権限を確認してください") }
@@ -179,7 +191,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
                 val peer = peers[gatt.device.address] ?: return@post
                 if (peer.gatt !== gatt) return@post
                 if (status != BluetoothGatt.GATT_SUCCESS || newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    fail(peer, "Bifrostが切断されました")
+                    fail(peer, "ZMKが切断されました")
                 } else if (newState == BluetoothProfile.STATE_CONNECTED) {
                     if (!gatt.discoverServices()) fail(peer, "サービスを取得できません")
                 }
@@ -198,10 +210,10 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
                 if (peer.positions == null) { fail(peer, "ZMKペリフェラルではありません"); return@post }
                 when (peer.device.bondState) {
                     BluetoothDevice.BOND_BONDED -> configure(peer, gatt)
-                    BluetoothDevice.BOND_BONDING -> listener.status("Bifrostのペアリングを承認してください")
+                    BluetoothDevice.BOND_BONDING -> listener.status("ZMKのペアリングを承認してください")
                     else -> if (!peer.device.createBond())
                         fail(peer, "ペアリングを開始できません")
-                    else listener.status("Bifrostのペアリングを承認してください")
+                    else listener.status("ZMKのペアリングを承認してください")
                 }
             }
         }
@@ -276,7 +288,7 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
         reconnectDelays.remove(peer.device.address)
         val addresses = preferences.getStringSet("addresses", emptySet()).orEmpty() + peer.device.address
         preferences.edit().putStringSet("addresses", addresses).apply()
-        listener.status("Bifrost ${readyCount()}/2 接続")
+        listener.status("ZMK ${readyCount()}/2 接続")
         peer.side?.let { listener.battery(it, peer.batteryLevel) }
         peer.battery?.let { battery ->
             if (battery.getDescriptor(CCC) != null) {
@@ -302,13 +314,14 @@ internal class ZmkCentral(private val context: Context, private val listener: Li
     }
 
     private fun applyPositions(peer: Peer, value: ByteArray) {
-        for (position in 0..48) {
+        for (position in 0 until positionCount) {
             val old = (peer.state[position / 8].toInt() shr (position % 8)) and 1
             val next = (value[position / 8].toInt() shr (position % 8)) and 1
             if (old != next) {
                 if (next != 0) {
-                    val side = if (position in 0..5 || position in 13..18 ||
-                        position in 25..30 || position in 38..43) 0 else 1
+                    val side = if (!customPositions) {
+                        if (position in 0..5 || position in 13..18 || position in 25..30 || position in 38..43) 0 else 1
+                    } else if (position in leftPositions) 0 else 1
                     if (peer.side != side) {
                         peer.side = side
                         preferences.edit().putInt("side_${peer.device.address}", side).apply()

@@ -225,6 +225,29 @@ internal class HidController(private val context: Context, private val settings:
         hid?.sendReport(destination, if (bootMode) 0 else HidReports.KEYBOARD_ID, keyboardReport())
     }
 
+    fun relayKeyboard(modifiers: Int, usages: Set<Int>) {
+        physicalKeys.keys.filter { it >= 1000 }.toList().forEach(physicalKeys::remove)
+        for (bit in 0 until 8) if (modifiers and (1 shl bit) != 0)
+            physicalKeys[1000 + bit] = (1 shl bit) to 0
+        usages.filter { it in 4..231 }.forEach { usage ->
+            physicalKeys[1100 + usage] = 0 to usage
+        }
+        sendKeyboard()
+    }
+
+    fun relayConsumer(usage: Int) {
+        val destination = host ?: return
+        if (bootMode) return
+        hid?.sendReport(destination, HidReports.CONSUMER_ID, HidReports.consumer(usage))
+    }
+
+    fun relayMouse(buttons: Int, x: Int, y: Int, wheel: Int) {
+        mouseButtons = buttons and 7
+        if (x != 0 || y != 0) mouseMove(x, y)
+        else sendMouse(0, 0, 0)
+        if (wheel != 0) scroll(wheel)
+    }
+
     private fun clearPhysicalState() {
         physicalKeys.clear(); physicalMouseButtons.clear(); tapModifiers = 0; tapCode = 0
     }
