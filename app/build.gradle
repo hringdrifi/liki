@@ -1,6 +1,15 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
+    id 'org.jetbrains.compose'
+}
+
+dependencies {
+    implementation project(':shared')
+    implementation 'androidx.activity:activity-compose:1.10.1'
+    implementation compose.runtime
+    implementation compose.ui
 }
 
 kotlin {
