@@ -130,7 +130,24 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
             let scale = UIScreen.main.scale
             return ["preferences": preferences, "settings": settings, "status": status, "session": session,
                     "density": scale, "xdpi": scale * 160,
-                    "privacy": "LikiはiPhoneをBluetoothキーボード・マウスとして使用します。操作は接続先へBLE HIDで送信されます。設定、キー割り当て、レイアウトは端末内に保存され、アプリの削除で削除できます。広告・解析サービスはありません。お問い合わせ: hringdrifi@gmail.com"] as [String: Any?]
+                    "privacy": """
+                    Liki プライバシーポリシー（2026年10月21日）
+
+                    Likiは、Android端末・iPhone・iPadをBluetoothキーボードとマウス・トラックパッドとして使うアプリです。
+
+                    Likiはキー入力の履歴を保存しません。キー操作とポインター操作は、利用者がBluetoothで接続した機器にのみ送信し、開発者や第三者のサーバーへ送信しません。
+
+                    扱う情報と目的
+                    Androidでは、接続先を選ぶためにペアリング済みBluetooth機器の名前とアドレスを読み取り、最後に接続した機器のアドレスを端末内に保存します。iOSでは、接続したBluetooth機器の識別子を接続状態の管理に使用します。操作設定、読み込んだキーボードレイアウト、キー割り当て、保存したレイアウトは、いずれのOSでも端末内に保存します。
+
+                    外部への送信
+                    キー操作とポインター操作は、接続先の機器へBluetooth HIDまたはBLE HIDで送信します。接続先での入力内容の扱いは、その機器と利用者の設定によります。Likiには広告・解析サービスを組み込んでおらず、入力内容や設定を開発者のサーバーへ収集する機能はありません。開発ビルドでは、利用者が接続した開発サーバー（Metro）からコードを読み込むためのネットワーク通信を行います。
+
+                    保存、保護、削除
+                    アプリが保存する情報は、AndroidまたはiOSのアプリ専用領域に置かれます。iOSではUserDefaultsなどを使用します。保存したレイアウトはアプリ内で個別に削除できます。その他のアプリ内データは、Androidの「アプリのストレージを消去」またはアンインストール、iOSの「Appを削除」で端末から削除できます。iOSの「Appを取り除く」ではデータが残ります。OSのバックアップ設定によっては、バックアップにアプリ内データが含まれる場合があります。Bluetooth通信の保護は、OSと接続先機器のペアリング設定に従います。
+
+                    お問い合わせ: hringdrifi@gmail.com
+                    """] as [String: Any?]
         case "session": session = args["value"] as? String
         case "status": return status
         case "asset": return try asset(args["name"] as? String ?? "")
