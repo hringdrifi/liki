@@ -70,13 +70,21 @@ Androidの実際のPCへの転送結果、iOSのHID、およびEASのクラウ�
 - `npm run lint` / `npm run typecheck`: 成功。
 - `npx expo prebuild --platform android --no-install`: 成功。生成された `android/gradle.properties` に `android.cmakeVersion=3.31.6` を確認。
 - CMake 3.31.6 / Ninja 1.12.1で `gradlew.bat :app:assembleDebug`: **成功**。arm64-v8a、armeabi-v7a、x86、x86_64のビルドを完了し、パス長エラーを解消した。
-- APK: `android/app/build/outputs/apk/debug/app-debug.apk`（226,502,915 bytes）。applicationId `jp.liki.pockethid`、versionName/versionCode `1.0.2` / `3` を出力メタデータで確認。
+- APK: `android/app/build/outputs/apk/debug/app-debug.apk`。applicationId `jp.liki.pockethid`、versionName/versionCode `1.0.2` / `3` を出力メタデータで確認。
 
 このAPKはexpo-dev-clientの開発用で、画面の実行にはMetroを起動する。Android端末（2407FPN8ER）へのインストール、Metroからの画面読み込み、接続画面の「準備完了」表示を確認した。PCへのHID送信は未確認。
 
 初回のFlutter版からの入れ替えは、デバッグ署名が異なり `INSTALL_FAILED_UPDATE_INCOMPATIBLE` になるため、許可済みの旧設定削除を伴ってFlutter版をアンインストールし、`adb install --no-streaming` でExpo版をインストールした。端末側の確認でもインストール許可が必要だった。Flutter APKはローカルの `build/Liki-flutter-debug.apk` に保存している。
 
 このWindows環境では `--localhost` のMetroがIPv6の `::1` だけで待ち受けたため、起動するプロセスで `$env:NODE_OPTIONS = '--dns-result-order=ipv4first'` を設定してから `npm start -- --localhost` を実行し、`127.0.0.1:8081` の応答を確認した。`adb reverse tcp:8081 tcp:8081` を設定し、開発クライアントを `exp+liki://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081` で開いた。
+
+## 設定削除時のnull変換エラー修正（2026-10-20）
+
+レイアウト選択や保存レイアウト削除では、設定を消すために `null` を送る。汎用の `invoke` の `Map<String, Any?>` の中へ設定マップを入れると、Expo 58のAny変換が内側のnullをObjectとして扱い、`Value is null, expected an Object` で拒否した。修正前の実機で同じエラーを再現した。
+
+設定保存だけを `preferences(Map<String, String?>)` という型付きのExpoモジュール関数にし、JavaScript側もこの関数を呼ぶように修正した。保存データや削除の意味は変更していない。
+
+lint・型チェック・15件のテスト、APKビルドが成功。修正版APK（231,090,419 bytes）を設定を保持して実機に上書きインストールした。実機のネイティブ境界で文字列の保存、nullによる削除、既存の選択レイアウトを変えないことを確認し、エラー表示のない接続画面の起動も確認した。
 
 ## 依存関係の監査
 

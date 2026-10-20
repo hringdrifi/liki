@@ -2,7 +2,7 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
 import { PermissionsAndroid, Platform } from 'react-native';
 import type { Backend, Data } from './model';
 
-type HidModule = { invoke(method: string, args: Data): Promise<any>; pickFile(): Promise<string | null>;
+type HidModule = { invoke(method: string, args: Data): Promise<any>; preferences(values: Record<string, string | null>): Promise<void>; pickFile(): Promise<string | null>;
   addListener(event: string, listener: (status: Data) => void): { remove(): void } };
 const hid = Platform.OS === 'android' ? requireOptionalNativeModule<HidModule>('LikiHid') : null;
 export const unavailable = Platform.OS !== 'android' ? 'この版は Bluetooth キーボード・マウス機能に未対応です。' :
@@ -18,6 +18,7 @@ export const backend: Backend = {
         if (granted !== PermissionsAndroid.RESULTS.GRANTED && method === 'discoverable') throw Error('Bluetooth公開権限が必要です');
       }
     }
+    if (method === 'preferences') return hid.preferences(args.values);
     return method === 'pickFile' ? hid.pickFile() : hid.invoke(method, args);
   },
   subscribe(listener) {

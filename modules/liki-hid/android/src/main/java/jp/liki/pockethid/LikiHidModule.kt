@@ -20,6 +20,9 @@ class LikiHidModule : Module() {
         AsyncFunction("invoke") { method: String, args: Map<String, Any?> ->
             backend().invoke(method, args)
         }.runOnQueue(Queues.MAIN)
+        AsyncFunction("preferences") { values: Map<String, String?> ->
+            backend().invoke("preferences", mapOf("values" to values))
+        }.runOnQueue(Queues.MAIN)
         AsyncFunction("pickFile") { promise: Promise -> backend().pickFile(promise) }.runOnQueue(Queues.MAIN)
         OnActivityResult { _, result -> bridge?.activityResult(result.requestCode, result.resultCode, result.data) }
         OnActivityEntersForeground { bridge?.resume() }
