@@ -50,10 +50,24 @@ KLEはキーの表示・配置形式であり、HIDコードを直接指定し�
 
 ## ビルド
 
-Android Studioでこのディレクトリを開き、Android SDK Platform 36を導入して `app` をビルドします。コマンドラインでは `./gradlew assembleDebug`（Windowsは `gradlew.bat assembleDebug`）です。生成されるAPKは `app/build/outputs/apk/debug/app-debug.apk` です。
+このブランチは main の `2c2f3f4` を基点に、画面・キーボード描画・タッチ操作を Flutter に移植しています。Android の HID、KLE/キーコード解析、既存設定の移行は Kotlin を使用し、パッケージ名と保存データ形式を維持しています。iOS の HID は実装していません。
+
+Flutter 3.47.7、JDK 21、Android SDK Platform 36、Build-Tools 36.0.0 を使用します。`local.properties` に `sdk.dir` と `flutter.sdk`（Flutter SDK の絶対パス）を設定するか、`FLUTTER_ROOT` を指定してください。Gradle Wrapper は Flutter の最低要件に合わせて 8.14.3 に更新しています。
+
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot'
+Push-Location flutter
+flutter pub get
+flutter analyze
+flutter test
+Pop-Location
+.\gradlew.bat :app:assembleDebug
+```
+
+生成されるAPKは `app/build/outputs/apk/debug/app-debug.apk` です。Flutter のコードは `flutter/lib/`、Androidとの接続は `MainActivity.kt` の `jp.liki/hid` チャンネルにあります。通常の移植確認は `flutter/test/parity_test.dart`、実機確認の項目は [Flutter 移植の確認メモ](docs/flutter-port.md) を参照してください。
 
 Android 12以降ではBluetooth接続・公開の実行時権限を要求します。探索権限や位置情報権限は不要です。
 
 ## ライセンス
 
-このアプリは [GNU GPL v3.0 or later](LICENSE)（SPDX: `GPL-3.0-or-later`）で公開しています。GNU GPLバージョン3、または希望によりそれ以降のバージョンを適用できます。配布するAPKに対応するソースコードは、このリポジトリの同じバージョンから取得できます。
+このブランチは [GNU AGPL v3.0 or later](LICENSE)（SPDX: `AGPL-3.0-or-later`）で公開しています。GNU Affero GPLバージョン3、または希望によりそれ以降のバージョンを適用できます。配布するAPKに対応するソースコードは、このリポジトリの同じバージョンから取得できます。

@@ -4,12 +4,14 @@ import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal data class LayoutViewState(val zoom: Float, val panX: Float, val panY: Float)
+
 internal data class SavedLayout(
     val name: String,
     val kleJson: String,
     val overrides: String,
     val layerOverrides: String,
-    val viewState: KleKeyboardView.ViewState
+    val viewState: LayoutViewState
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("name", name)
@@ -31,7 +33,7 @@ internal data class SavedLayout(
             val panY = json.optDouble("pan_y", 0.0).toFloat()
             if (!zoom.isFinite() || zoom <= 0f || !panX.isFinite() || !panY.isFinite()) return null
             return SavedLayout(name, kleJson, json.optString("overrides", "{}"),
-                json.optString("layer_overrides", "{}"), KleKeyboardView.ViewState(zoom, panX, panY))
+                json.optString("layer_overrides", "{}"), LayoutViewState(zoom, panX, panY))
         }
     }
 }

@@ -1,7 +1,10 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
+    id 'dev.flutter.flutter-gradle-plugin'
 }
+
+flutter { source '../flutter' }
 
 kotlin {
     compilerOptions {
@@ -12,6 +15,7 @@ kotlin {
 android {
     namespace 'jp.liki.pockethid'
     compileSdk 36
+    sourceSets.main.java.srcDir '../flutter/.android/Flutter/src/main/java'
 
     defaultConfig {
         applicationId 'jp.liki.pockethid'

@@ -1,4 +1,22 @@
-pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+pluginManagement {
+    def properties = new Properties()
+    file('local.properties').withInputStream { properties.load(it) }
+    def flutterSdk = properties.getProperty('flutter.sdk') ?: System.getenv('FLUTTER_ROOT')
+    assert flutterSdk != null : 'Set flutter.sdk in local.properties or FLUTTER_ROOT'
+    includeBuild("$flutterSdk/packages/flutter_tools/gradle")
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+plugins {
+    id 'dev.flutter.flutter-plugin-loader' version '1.0.0'
+    id 'com.android.application' version '8.13.2' apply false
+    id 'org.jetbrains.kotlin.android' version '2.3.20' apply false
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+    repositories {
+        google(); mavenCentral()
+        maven { url 'https://storage.googleapis.com/download.flutter.io' }
+    }
+}
 rootProject.name = 'PocketHID'
 include ':app'

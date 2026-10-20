@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Flutter's debug VM service; release HID operation needs no network permission. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

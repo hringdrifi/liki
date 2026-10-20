@@ -9,3 +9,10 @@ local.properties
 /docs/play-listing-ja.md
 /docs/play-release.md
 /AGENTS.md
+/.tools/
+/flutter/.dart_tool/
+/flutter/.android/
+/flutter/.ios/
+/flutter/.metadata
+/flutter/.flutter-plugins-dependencies
+/flutter/build/
