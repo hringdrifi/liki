@@ -13,7 +13,7 @@ internal class LayoutRepository(context: Context) {
         KleLayout.parse(json)
         return mapOf(
             "json" to json,
-            "overrides" to (preferences.getString("overrides", "{}") ?: "{}"),
+            "overrides" to (preferences.getString("overrides", null) ?: inferred(json)),
             "layers" to (preferences.getString("layer_overrides", "{}") ?: "{}"),
             "selected" to preferences.getString("selected_saved_layout_name", null)
         )
