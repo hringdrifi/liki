@@ -41,13 +41,13 @@ npx eas-cli@latest build --platform android --profile development
 
 EASはリポジトリ直下で実行する。必要なネイティブコードとKLEファイルは `modules/liki-hid/`、アイコンは `artwork/` に含まれる。鍵やローカル設定はGit除外を維持する。
 
-iOS用の開発ビルド自体はEASとApple Developerの署名設定を使ってクラウドで作成できるが、この移植にはiOSのBluetooth HID処理がない。iPhoneで起動した場合は現在の未対応状態を表示する。iOSのビルド・実機動作は未検証であり、Androidと同じ機能が動くとは扱わない。
+iOS用の開発ビルドはEASとApple Developerの署名設定を使ってクラウドで作成する。2026-10-20にiPhone 11向けの未対応表示版をビルド・インストール・起動した。その後のBLE HID追加の詳細と検証範囲は末尾を参照。
 
 ## 検証の範囲
 
 自動テストはAndroid境界を模擬して、修飾キー、全レイヤー、押している指を先に離したときのコード入力、編集の保存/キャンセル、保存レイアウトの保存・復元、回転キーと表示ズーム、トラックパッドの各操作を確認する。
 
-Androidの実際のPCへの転送結果、iOSのHID、およびEASのクラウドビルドは別途確認が必要。初期移植検証後、端末のFlutter版をExpo版に入れ替え、接続画面の起動まで確認した。
+Androidの実際のPCへの転送結果とiOSのHID送信結果は別途確認が必要。初期移植検証後、端末のFlutter版をExpo版に入れ替え、接続画面の起動まで確認した。
 
 ## 2026-10-20 の検証結果（Ninja更新前）
 
@@ -131,3 +131,23 @@ JDK 21で `:app:assembleDebug` が9分で成功。既存APKと署名が一致す
 ユーザー指定により、旧Android版・Flutter版の保存設定との互換処理を削除した。Expo版は専用の保存領域（expo_settings / expo_layout）を使い、初回起動時は初期設定になる。旧settings / layout保存領域はExpoネイティブ処理の初期化時に削除する。Expo版で新しく保存した設定・レイアウトは以後の起動でも保持する。旧レイアウトの自動更新・割り当てスキーマ移行・旧レイアウト資産は削除した。
 
 Expoプロジェクトはリポジトリ直下に配置した。旧appとルートの旧Gradle構成は削除し、Bluetooth HID・KLE解析・設定保存と必要な資産だけをローカルモジュールに取り込んだ。旧実装の参照にはGit履歴とFlutterブランチを使う。
+
+## iOS BLE HID（2026-10-21）
+
+`darwin-bt-remote` の `ad7a76ce6132254fbd6085af87cea8d10aa8a82d` にあるHOGP実装を基に、`modules/liki-hid/ios/` にSwiftのExpoモジュールを追加した。出典と変更点を各ファイルに記載し、AGPL-3.0-onlyの原文を同ディレクトリに保存した。
+
+- CoreBluetoothの接続イベント登録後に、Battery → Device Information → HIDの順にサービスを追加する。UUIDは128-bit表記、HID特性の順序・Report Reference・暗号化要求・購読直後の初期レポートは参照実装に従う。
+- キー・修飾キー、マウス3ボタン・相対移動・スクロール、Consumer Controlを既存のJS操作に接続する。通知キューが満杯の場合はFIFOで再送し、キーの解放を保持する。バックグラウンド移行時と切断時は入力を解放する。
+- iOSはPC側から接続する。iOSの接続画面ではAndroid専用のペアリング済みPC一覧と接続開始ボタンを表示しない。公開名は「Liki」。アプリを開いて使用する。バックグラウンド広告・復元は追加していない。
+- AndroidのKLE仕様・標準割り当てをiOS用TypeScript境界に移植し、保存済みの空の割り当ても維持する。設定とレイアウトはUserDefaultsに保存し、ファイル選択はUIDocumentPickerを使う。表示密度から計算するキーピッチは概算。
+- Bluetooth利用目的をInfo.plistに追加する。独自モジュール追加のため、既存のiOS開発クライアントは再ビルド・再インストールが必要。
+
+型チェック、lint、既存16件とiOS追加4件のテスト、iOS Hermesバンドル生成が成功。Swiftのコンパイルと署名はEASで確認する。実際のBLEペアリング、PCへのキー・マウス送信、実機の設定操作は未検証であり、コードとJSテストの成功を実機動作確認とは扱わない。
+
+初回のEASビルドはCocoaPodsのライセンスファイル拡張子の検査で失敗した。ファイル名を `.txt` に修正した後、再ビルドが **FINISHED** となり、Swiftコンパイル・アーカイブ・署名付きIPAの生成に成功した。開発用のApple署名設定とAd Hocプロファイルを使っている。署名付きIPAは公開リリースに含めない。BLE HID版のペアリング・入力送信の確認は未完了。
+
+### iOSのレイアウト資産同梱修正（2026-10-21）
+
+上記ビルドの実機で「レイアウト資産を開けません」が発生した。公開IPAを取得して検査すると `Payload/Liki.app/LikiHid.bundle/` にInfo.plistだけがあり、JSONは欠落していた。ios/配下のPodspecから `../android/` を指す指定では、Podのルート外の資産が同梱されなかった。
+
+Podspecをモジュール直下へ移し、Swiftは `ios/*.swift`、資産は `android/src/main/assets/*.json` を指定した。Expoの `apple.podspecPath` に新しい位置を明記し、自動リンクの結果も確認した。修正版の再ビルドは **FINISHED**。そのIPA内の同じbundleに `default-kle.json`（969 bytes）と `ghosted-trackpad.json`（299 bytes）が存在し、双方のSHA-256が元ファイルと一致することを確認した。修正版の実機への上書きインストールと初期化の再確認はユーザー側で行う。BLEペアリングと入力送信も引き続き未確認。

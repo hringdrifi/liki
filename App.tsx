@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, Pressable, Modal, TextInput, Alert, BackHandler, AppState, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, Pressable, Modal, TextInput, Alert, BackHandler, AppState, ActivityIndicator, Platform } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { backend, unavailable } from './src/native';
 import { LikiModel } from './src/model';
@@ -115,16 +116,17 @@ function Liki() {
     <Text style={styles.text}>スマホをPCのキーボード・トラックパッドに</Text>
     <Text style={[styles.text, { color: model.connected ? colors.accent : colors.muted, paddingVertical: 26, fontWeight: 'bold' }]}>{model.connected ? '●' : '○'} {model.status.message ?? ''}</Text>
     <Section title="1. PCとペアリング" /><Text style={styles.text}>下のボタンを押した後、PCのBluetooth設定からこのスマホを追加します。</Text>
-    <Button title="ペアリング待機（5分間公開）" onPress={() => run(() => model.call('discoverable'))} />
-    <Section title="2. 接続先を選択" /><View style={{ flexDirection: 'row', gap: 8 }}>
+    <Button title={Platform.OS === 'ios' ? 'BLEペアリング待機' : 'ペアリング待機（5分間公開）'} onPress={() => run(() => model.call('discoverable'))} />
+    {Platform.OS === 'ios' ? <Text style={[styles.muted, { paddingVertical: 12 }]}>PC側から「Liki」に接続してください。iOSではPCの一覧取得やアプリ側からの接続はできません。</Text> : <><Section title="2. 接続先を選択" /><View style={{ flexDirection: 'row', gap: 8 }}>
       <View style={{ flex: 1 }}><Button disabled={!!connecting || !!cancelling} title={model.devices.find(d => d.address === model.selectedAddress)?.name ?? 'ペアリング済みのPCがありません'} onPress={() => run(async () => {
         const at = await choose('接続先を選択', model.devices.map(d => d.name)); if (at !== null) { model.selectedAddress = model.devices[at].address; model.changed(); }
       })} /></View><Button title="更新" onPress={() => run(() => model.refresh())} /></View>
     <Button disabled={!!cancelling} title={cancelling ? 'キャンセル中…' : connecting ? '接続をキャンセル' : '選択したPCに接続'}
-      onPress={() => run(() => model.call(connecting ? 'cancelConnection' : 'connect', { address: model.selectedAddress ?? '' }))} />
+      onPress={() => run(() => model.call(connecting ? 'cancelConnection' : 'connect', { address: model.selectedAddress ?? '' }))} /></>}
     <Text style={[styles.muted, { paddingVertical: 12 }]}>接続すると操作画面へ切り替わります。PCから自動接続される場合もあります。</Text><Button title="プライバシーポリシー" onPress={privacy} />
   </ScrollView>;
   return <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+    {Platform.OS === 'ios' && <StatusBar style="light" hidden={model.showingControls && !model.settingsVisible && model.flag('fullscreen_controls')} />}
     {unavailable ? <View style={{ padding: 20 }}><Text style={styles.text}>{unavailable}</Text></View> : model.error ? <View style={{ padding: 20 }}><Text style={styles.text}>初期化できません: {model.error}</Text>
       <Button title="再試行" onPress={() => run(() => model.initialize())} /></View> : !model.initialized ? <ActivityIndicator color={colors.accent} /> :
       model.settingsVisible ? <Settings model={model} onBack={() => { model.settingsVisible = false; model.syncPage(); model.changed(); }} onPrivacy={privacy} choose={choose} prompt={prompt} run={run} /> : model.showingControls ? controls : connection}
@@ -137,11 +139,12 @@ function Liki() {
     </View>}
     {menu && model.showingControls && <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, flexDirection: 'row' }}>
       <Pressable accessibilityLabel="メニューを閉じる" style={{ flex: 1, backgroundColor: '#00000096' }} onPress={() => setMenu(false)} />
-      <ScrollView style={{ width: '80%', maxWidth: 300, backgroundColor: colors.surface }} contentContainerStyle={{ padding: 12 }}>
+      <SafeAreaView edges={['top', 'right', 'bottom']} style={{ width: '80%', maxWidth: 300, backgroundColor: colors.surface }}>
+      <ScrollView contentContainerStyle={{ padding: 12 }}>
         <Text style={[styles.text, { fontSize: 24, fontWeight: 'bold', padding: 12 }]}>Liki</Text>{model.selectedName && <Text style={styles.text}>保存: {model.selectedName}</Text>}
         <Button title="レイアウトを選択" onPress={() => action(chooseLayout)} /><Button title="キー割り当てを編集" onPress={() => { setMenu(false); model.beginEdit(); }} />
         <Button title="表示をリセット" onPress={() => action(() => model.resetView())} /><Button title="設定" onPress={() => { setMenu(false); model.settingsVisible = true; model.syncPage(); model.changed(); }} />
-        <Button title="切断" onPress={() => action(() => model.call('disconnect'))} /></ScrollView></View>}
+        <Button title="切断" onPress={() => action(() => model.call('disconnect'))} /></ScrollView></SafeAreaView></View>}
     <Modal visible={!!dialog} transparent animationType="fade" onRequestClose={closeDialog}>
       <View style={{ flex: 1, justifyContent: 'center', backgroundColor: '#00000099', padding: 24 }}><View style={{ backgroundColor: colors.surface, maxHeight: '85%', borderRadius: 12, padding: 16 }}>
         <Text style={[styles.text, { fontWeight: 'bold', fontSize: 20, marginBottom: 12 }]}>{dialog?.title}</Text>

@@ -4,7 +4,10 @@ module.exports = {
   android: { package: 'jp.liki.pockethid', versionCode: 3,
     adaptiveIcon: { foregroundImage: './artwork/adaptive-icon-foreground.png',
       backgroundImage: './artwork/adaptive-icon-background.png', backgroundColor: '#10151c' } },
-  ios: { bundleIdentifier: 'jp.liki.pockethid', supportsTablet: true },
+  ios: { bundleIdentifier: 'jp.liki.pockethid', supportsTablet: true,
+    infoPlist: { ITSAppUsesNonExemptEncryption: false,
+      NSBluetoothAlwaysUsageDescription: 'LikiをBluetoothキーボード・マウスとしてPCに接続します。' } },
+  extra: { eas: { projectId: 'f10d00cb-5add-4b0d-ade2-b539b5fa045d' } },
   plugins: [
     'expo-dev-client',
     ['expo-splash-screen', { backgroundColor: '#10151c', image: './artwork/adaptive-icon-foreground.png', imageWidth: 180, resizeMode: 'contain' }],

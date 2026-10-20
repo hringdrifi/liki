@@ -64,7 +64,9 @@ cd android
 .\gradlew.bat :app:assembleDebug
 ```
 
-開発クライアントでの実行にはリポジトリ直下で `npm start` を使います。Expo Goは独自のHIDモジュールを含まないため利用できません。MacなしでのEASビルドの手順と現在の検証範囲は [Expo移植メモ](docs/expo-port.md) を参照してください。iOSのHIDは実装していません。
+開発クライアントでの実行にはリポジトリ直下で `npm start` を使います。Expo Goは独自のHIDモジュールを含まないため利用できません。MacなしでのEASビルドの手順と現在の検証範囲は [Expo移植メモ](docs/expo-port.md) を参照してください。
+
+iOSには [darwin-bt-remote](https://github.com/jqssun/darwin-bt-remote) を基にしたCoreBluetoothのBLE HID（HID over GATT）を追加しています。PCのBluetooth設定から「Liki」を追加し、iPhone側でBluetooth権限とペアリングを許可します。iOS側からペアリング済みPCの一覧取得・接続開始はできません。ネイティブモジュールを含むiOS開発ビルドの再インストールが必要です。PCとの実際のペアリング・入力は検証が必要です。
 
 比較用のFlutter版は `codex/flutter-faithful-port`（`1987ee2`）にあります。実機へのインストール・起動・操作画面の表示まで確認済みです。
 
