@@ -19,7 +19,7 @@ Flutter版は `codex/flutter-faithful-port` / `1987ee2` に保存し、Android�
 
 Node 24とJDK 21を使用する。生成元のバージョンはExpo SDK 58 / React Native 0.88 / React 19.3。実際の依存関係は `package-lock.json` に固定する。
 
-Expo 58の依存ライブラリが必要とする `compileSdk 37` とBuild-Tools 37を使用する。`minSdk 28` と `targetSdk 36` はmainの設定を維持する。
+Expo 58の依存ライブラリが必要とする `compileSdk 37` とBuild-Tools 37を使用する。CMake 3.31.6をAndroid SDKに導入する（Android StudioのSDK Toolsで「Show Package Details」から選択できる）。`app.config.js` の `expo-build-properties` で同じバージョンを指定し、長いパスに対応した同梱Ninjaを使用する。`minSdk 28` と `targetSdk 36` はmainの設定を維持する。
 
 1. リポジトリ直下で `npm ci`。
 2. `npm run lint`、`npm run typecheck` と `npm test`。
@@ -49,7 +49,7 @@ iOS用の開発ビルド自体はEASとApple Developerの署名設定を使っ�
 
 Androidの実際のPCへの転送結果、iOSのHID、およびEASのクラウドビルドは別途確認が必要。この作業では端末上のFlutter版を保持しており、Expo版の上書きインストールは行っていない。
 
-## 2026-10-20 の検証結果
+## 2026-10-20 の検証結果（Ninja更新前）
 
 - `npm run lint`: 成功。
 - `npm run typecheck`: 成功。
@@ -61,7 +61,18 @@ Androidの実際のPCへの転送結果、iOSのHID、およびEASのクラウ�
 
 コンパイル用SDKを37に上げたことで、当初のExpoライブラリのAARメタデータ検査エラーは解消している。全体のAPKビルド成功や、Expo版の実機動作確認を意味するものではない。
 
-使用したCMake 3.22.1付属のNinja 1.10.2は長いパスに対応しない。Expo公式もこの組み合わせを説明している。CMakeの変更や短いパスへの別チェックアウトは実行していない。リポジトリ直下への構成整理後も同じNinjaエラーでAPKビルドが失敗した。lint、型チェック、15件のテスト、Androidプロジェクト再生成とHermesバンドル生成は整理後も成功した。
+使用したCMake 3.22.1付属のNinja 1.10.2は長いパスに対応しない。リポジトリ直下への構成整理後も同じNinjaエラーでAPKビルドが失敗した。lint、型チェック、15件のテスト、Androidプロジェクト再生成とHermesバンドル生成は整理後も成功した。
+
+ユーザー指示により、Android公式配布のCMake 3.31.6（同梱Ninja 1.12.1）を導入し、`expo-build-properties` の `android.cmakeVersion` で指定した。この選択は [Expo公式の説明](https://github.com/expo/expo/blob/main/packages/expo-modules-autolinking/android/expo-gradle-plugin/README.md) に従っている。配布アーカイブはGoogleのSDKリポジトリに記載されたSHA-1で検証した。生成されたCMakeコマンドが `cmake/3.31.6/bin/ninja.exe` を参照することも確認した。
+
+## Ninja更新後の検証（2026-10-20）
+
+- `npm run lint` / `npm run typecheck`: 成功。
+- `npx expo prebuild --platform android --no-install`: 成功。生成された `android/gradle.properties` に `android.cmakeVersion=3.31.6` を確認。
+- CMake 3.31.6 / Ninja 1.12.1で `gradlew.bat :app:assembleDebug`: **成功**。arm64-v8a、armeabi-v7a、x86、x86_64のビルドを完了し、パス長エラーを解消した。
+- APK: `android/app/build/outputs/apk/debug/app-debug.apk`（226,502,915 bytes）。applicationId `jp.liki.pockethid`、versionName/versionCode `1.0.2` / `3` を出力メタデータで確認。
+
+このAPKはexpo-dev-clientの開発用で、画面の実行には `npm start` でMetroを起動する。端末へのインストール・PCへのHID送信確認は行っていない。
 
 ## 依存関係の監査
 

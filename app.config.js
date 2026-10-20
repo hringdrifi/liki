@@ -7,7 +7,7 @@ module.exports = {
   ios: { bundleIdentifier: 'jp.liki.pockethid', supportsTablet: true },
   plugins: [
     'expo-dev-client',
-    ['expo-build-properties', { android: { minSdkVersion: 28, compileSdkVersion: 37, targetSdkVersion: 36 } }],
+    ['expo-build-properties', { android: { minSdkVersion: 28, compileSdkVersion: 37, targetSdkVersion: 36, cmakeVersion: '3.31.6' } }],
     './plugins/with-liki',
   ],
 };
