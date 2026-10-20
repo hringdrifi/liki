@@ -1,0 +1,74 @@
+# React Native + Expo の移植
+
+ブランチ: `codex/expo-faithful-port`。基点: main `2c2f3f4`。
+
+Flutter版は `codex/flutter-faithful-port` / `1987ee2` に保存し、Android端末へのインストールと起動を確認してから、このブランチの作業を開始した。
+
+## 構成と機能
+
+- `App.tsx`: 接続、右端メニュー、レイアウト選択、名前付き保存・復元・削除、4レイヤーの割り当て編集、修飾式。
+- `src/Keyboard.tsx`: SVGによるKLE描画。回転、変形キー、ラベル、Ghosted領域、レイヤーごとの枠色。
+- `src/model.ts` / `gestures.ts`: 修飾キー、4レイヤー、ワンショット、押している間の切り替え、表示のパン/ズーム、全トラックパッド操作。
+- `src/Settings.tsx`: 全設定をExpo版専用の保存領域に保存する。
+- `modules/liki-hid/`: Android HID、権限、公開、ファイル選択、KLE解析と設定保存を持つ独立したローカルExpoモジュール。旧画面・旧アプリへの参照はない。
+- `plugins/with-liki.js`: Bluetooth権限、機能宣言、Androidの画面再生成時の状態保存。
+
+パッケージ名は `jp.liki.pockethid`、versionName/versionCode は `1.0.2` / `3` のまま。ライセンスは AGPL-3.0-or-later。
+
+## Windowsでの開発
+
+Node 24とJDK 21を使用する。生成元のバージョンはExpo SDK 58 / React Native 0.88 / React 19.3。実際の依存関係は `package-lock.json` に固定する。
+
+Expo 58の依存ライブラリが必要とする `compileSdk 37` とBuild-Tools 37を使用する。`minSdk 28` と `targetSdk 36` はmainの設定を維持する。
+
+1. リポジトリ直下で `npm ci`。
+2. `npm run lint`、`npm run typecheck` と `npm test`。
+3. `npx expo prebuild --platform android --no-install`。Androidの生成物はGit除外し、再生成時にも必要な変更はconfig pluginから適用する。
+4. JDK 21と `ANDROID_HOME` を設定し、`android/` で `gradlew.bat :app:assembleDebug`。
+5. 開発APKを入れた端末向けにリポジトリ直下で `npm start`（`expo start --dev-client`）。USB接続でMetroを使う場合は `adb reverse tcp:8081 tcp:8081`。
+
+APKの出力先は `android/app/build/outputs/apk/debug/app-debug.apk`。Expo GoではローカルHIDモジュールを呼び出せない。
+
+## Macを使わないEAS Build
+
+リポジトリ直下でExpoアカウントにログインし、EASプロジェクトを設定してから実行する。
+
+```text
+npx eas-cli@latest build --platform android --profile development
+```
+
+`development` は専用の開発クライアント。JS/TSの変更はMetroから読み込める。Kotlinやネイティブ依存関係を変更した場合は開発クライアントを再ビルドする。`preview` プロファイルはJSを同梱した内部配布用APKに使う。
+
+EASはリポジトリ直下で実行する。必要なネイティブコードとKLEファイルは `modules/liki-hid/`、アイコンは `artwork/` に含まれる。鍵やローカル設定はGit除外を維持する。
+
+iOS用の開発ビルド自体はEASとApple Developerの署名設定を使ってクラウドで作成できるが、この移植にはiOSのBluetooth HID処理がない。iPhoneで起動した場合は現在の未対応状態を表示する。iOSのビルド・実機動作は未検証であり、Androidと同じ機能が動くとは扱わない。
+
+## 検証の範囲
+
+自動テストはAndroid境界を模擬して、修飾キー、全レイヤー、押している指を先に離したときのコード入力、編集の保存/キャンセル、保存レイアウトの保存・復元、回転キーと表示ズーム、トラックパッドの各操作を確認する。
+
+Androidの実際のPCへの転送結果、iOSのHID、およびEASのクラウドビルドは別途確認が必要。この作業では端末上のFlutter版を保持しており、Expo版の上書きインストールは行っていない。
+
+## 2026-10-20 の検証結果
+
+- `npm run lint`: 成功。
+- `npm run typecheck`: 成功。
+- `npm test`: 15件成功。描画時の状態更新を避け、画面回転・手動ピッチ・表示リセットの照合も含む。
+- `npx expo install --check`: 対応バージョンと一致。
+- `npx expo export --platform android --output-dir dist`: 成功。Hermesバンドル約1.8MBを生成。
+- `gradlew.bat :liki-hid:compileDebugKotlin`: 構成整理後も成功。旧アプリへのソース参照・Activity除外設定なしで、独立したモジュールをコンパイルした。
+- `gradlew.bat :app:assembleDebug`: **失敗、APK未作成**。`react-native-safe-area-context` のC++コード生成物でNinjaが `Filename longer than 260 characters` と報告する。現在のブロッカーはWindowsのパス長制限。
+
+コンパイル用SDKを37に上げたことで、当初のExpoライブラリのAARメタデータ検査エラーは解消している。全体のAPKビルド成功や、Expo版の実機動作確認を意味するものではない。
+
+使用したCMake 3.22.1付属のNinja 1.10.2は長いパスに対応しない。Expo公式もこの組み合わせを説明している。CMakeの変更や短いパスへの別チェックアウトは実行していない。リポジトリ直下への構成整理後も同じNinjaエラーでAPKビルドが失敗した。lint、型チェック、15件のテスト、Androidプロジェクト再生成とHermesバンドル生成は整理後も成功した。
+
+## 依存関係の監査
+
+2026-10-20 の `npm audit` では22件（high 15、moderate 7）が残っている。Expo/Metroなどの依存経路に `braces`、`node-forge`、`uuid` の指摘がある。自動修正にはExpo 44やReact Native 0.72への大幅なダウングレード提案も含まれるため、この移植では `audit fix --force` や依存関係の上書きを行っていない。対応は未解決として記録する。
+
+## 旧設定の扱いと構成整理
+
+ユーザー指定により、旧Android版・Flutter版の保存設定との互換処理を削除した。Expo版は専用の保存領域（expo_settings / expo_layout）を使い、初回起動時は初期設定になる。旧settings / layout保存領域はExpoネイティブ処理の初期化時に削除する。Expo版で新しく保存した設定・レイアウトは以後の起動でも保持する。旧レイアウトの自動更新・割り当てスキーマ移行・旧レイアウト資産は削除した。
+
+Expoプロジェクトはリポジトリ直下に配置した。旧appとルートの旧Gradle構成は削除し、Bluetooth HID・KLE解析・設定保存と必要な資産だけをローカルモジュールに取り込んだ。旧実装の参照にはGit履歴とFlutterブランチを使う。

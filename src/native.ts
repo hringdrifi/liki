@@ -1,0 +1,27 @@
+import { requireOptionalNativeModule } from 'expo-modules-core';
+import { PermissionsAndroid, Platform } from 'react-native';
+import type { Backend, Data } from './model';
+
+type HidModule = { invoke(method: string, args: Data): Promise<any>; pickFile(): Promise<string | null>;
+  addListener(event: string, listener: (status: Data) => void): { remove(): void } };
+const hid = Platform.OS === 'android' ? requireOptionalNativeModule<HidModule>('LikiHid') : null;
+export const unavailable = Platform.OS !== 'android' ? 'この版は Bluetooth キーボード・マウス機能に未対応です。' :
+  !hid ? 'Liki の開発ビルドをインストールしてください。Expo Go では Bluetooth HID を利用できません。' : undefined;
+
+export const backend: Backend = {
+  async invoke(method, args = {}) {
+    if (!hid) throw Error(unavailable);
+    if (Platform.OS === 'android' && Number(Platform.Version) >= 31 && (method === 'ready' || method === 'discoverable')) {
+      const permission = method === 'ready' ? PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT : PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE;
+      if (!await PermissionsAndroid.check(permission)) {
+        const granted = await PermissionsAndroid.request(permission);
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED && method === 'discoverable') throw Error('Bluetooth公開権限が必要です');
+      }
+    }
+    return method === 'pickFile' ? hid.pickFile() : hid.invoke(method, args);
+  },
+  subscribe(listener) {
+    if (!hid) throw Error(unavailable);
+    return hid.addListener('statusChanged', listener);
+  },
+};

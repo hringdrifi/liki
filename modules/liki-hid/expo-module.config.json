@@ -1,0 +1,4 @@
+{
+  "platforms": ["android"],
+  "android": { "modules": ["jp.liki.pockethid.LikiHidModule"] }
+}

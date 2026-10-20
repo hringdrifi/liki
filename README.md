@@ -48,12 +48,28 @@ KLEはキーの表示・配置形式であり、HIDコードを直接指定し�
 
 接続できないときは、両機器のペアリングを解除してからアプリを開いた状態で再ペアリングしてください。端末メーカーがHID Deviceプロファイルを提供していない場合、このアプリでは利用できません。
 
-## ビルド
+## React Native / Expo（このブランチ）
 
-Android Studioでこのディレクトリを開き、Android SDK Platform 36を導入して `app` をビルドします。コマンドラインでは `./gradlew assembleDebug`（Windowsは `gradlew.bat assembleDebug`）です。生成されるAPKは `app/build/outputs/apk/debug/app-debug.apk` です。
+main `2c2f3f4` を基点に、React Native + Expo + expo-dev-client で移植しています。プロジェクトはリポジトリ直下に置き、画面と操作は TypeScript、Android HIDとKLE解析は `modules/liki-hid/` にまとめています。旧Android版・Flutter版の設定は引き継がず、初期設定から開始します。Expo版で変更した設定や保存レイアウトは次回起動時にも復元されます。
+
+```powershell
+npm ci
+npm run lint
+npm run typecheck
+npm test
+npx expo prebuild --platform android --no-install
+$env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot'
+$env:ANDROID_HOME = 'C:\Users\ito\AppData\Local\Android\Sdk'
+cd android
+.\gradlew.bat :app:assembleDebug
+```
+
+開発クライアントでの実行にはリポジトリ直下で `npm start` を使います。Expo Goは独自のHIDモジュールを含まないため利用できません。MacなしでのEASビルドの手順と現在の検証範囲は [Expo移植メモ](docs/expo-port.md) を参照してください。iOSのHIDは実装していません。
+
+比較用のFlutter版は `codex/flutter-faithful-port`（`1987ee2`）にあります。実機へのインストール・起動・操作画面の表示まで確認済みです。
 
 Android 12以降ではBluetooth接続・公開の実行時権限を要求します。探索権限や位置情報権限は不要です。
 
 ## ライセンス
 
-このアプリは [GNU GPL v3.0 or later](LICENSE)（SPDX: `GPL-3.0-or-later`）で公開しています。GNU GPLバージョン3、または希望によりそれ以降のバージョンを適用できます。配布するAPKに対応するソースコードは、このリポジトリの同じバージョンから取得できます。
+この移植ブランチは [GNU AGPL v3.0 or later](LICENSE)（SPDX: `AGPL-3.0-or-later`）で公開しています。GNU Affero GPLバージョン3、または希望によりそれ以降のバージョンを適用できます。配布するAPKに対応するソースコードは、このリポジトリの同じバージョンから取得できます。

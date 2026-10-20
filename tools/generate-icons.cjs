@@ -4,7 +4,7 @@ const path = require('node:path');
 const sharp = require(process.argv[2] || 'sharp');
 
 const root = path.resolve(__dirname, '..');
-const res = path.join(root, 'app', 'src', 'main', 'res');
+const res = path.join(root, 'artwork');
 const icon = fs.readFileSync(path.join(root, 'artwork', 'liki-icon.svg'), 'utf8');
 const foreground = icon.replace(/<rect width="512" height="512" rx="112" fill="url\(#bg\)"\s*\/>/, '');
 if (foreground === icon) throw new Error('Could not separate icon foreground');
@@ -23,9 +23,6 @@ async function save(svg, directory, name, size) {
 }
 
 (async () => {
-  for (const [density, scale] of Object.entries({ mdpi: 1, hdpi: 1.5, xhdpi: 2, xxhdpi: 3, xxxhdpi: 4 })) {
-    await save(icon, `mipmap-${density}`, 'ic_launcher', Math.round(48 * scale));
-    await save(foreground, `drawable-${density}`, 'ic_launcher_foreground', Math.round(108 * scale));
-    await save(background, `drawable-${density}`, 'ic_launcher_background', Math.round(108 * scale));
-  }
+  await save(foreground, '', 'adaptive-icon-foreground', 432);
+  await save(background, '', 'adaptive-icon-background', 432);
 })().catch(error => { console.error(error); process.exitCode = 1; });
