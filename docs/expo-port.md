@@ -47,7 +47,7 @@ iOS用の開発ビルド自体はEASとApple Developerの署名設定を使っ�
 
 自動テストはAndroid境界を模擬して、修飾キー、全レイヤー、押している指を先に離したときのコード入力、編集の保存/キャンセル、保存レイアウトの保存・復元、回転キーと表示ズーム、トラックパッドの各操作を確認する。
 
-Androidの実際のPCへの転送結果、iOSのHID、およびEASのクラウドビルドは別途確認が必要。この作業では端末上のFlutter版を保持しており、Expo版の上書きインストールは行っていない。
+Androidの実際のPCへの転送結果、iOSのHID、およびEASのクラウドビルドは別途確認が必要。初期移植検証後、端末のFlutter版をExpo版に入れ替え、接続画面の起動まで確認した。
 
 ## 2026-10-20 の検証結果（Ninja更新前）
 
@@ -72,7 +72,11 @@ Androidの実際のPCへの転送結果、iOSのHID、およびEASのクラウ�
 - CMake 3.31.6 / Ninja 1.12.1で `gradlew.bat :app:assembleDebug`: **成功**。arm64-v8a、armeabi-v7a、x86、x86_64のビルドを完了し、パス長エラーを解消した。
 - APK: `android/app/build/outputs/apk/debug/app-debug.apk`（226,502,915 bytes）。applicationId `jp.liki.pockethid`、versionName/versionCode `1.0.2` / `3` を出力メタデータで確認。
 
-このAPKはexpo-dev-clientの開発用で、画面の実行には `npm start` でMetroを起動する。端末へのインストール・PCへのHID送信確認は行っていない。
+このAPKはexpo-dev-clientの開発用で、画面の実行にはMetroを起動する。Android端末（2407FPN8ER）へのインストール、Metroからの画面読み込み、接続画面の「準備完了」表示を確認した。PCへのHID送信は未確認。
+
+初回のFlutter版からの入れ替えは、デバッグ署名が異なり `INSTALL_FAILED_UPDATE_INCOMPATIBLE` になるため、許可済みの旧設定削除を伴ってFlutter版をアンインストールし、`adb install --no-streaming` でExpo版をインストールした。端末側の確認でもインストール許可が必要だった。Flutter APKはローカルの `build/Liki-flutter-debug.apk` に保存している。
+
+このWindows環境では `--localhost` のMetroがIPv6の `::1` だけで待ち受けたため、起動するプロセスで `$env:NODE_OPTIONS = '--dns-result-order=ipv4first'` を設定してから `npm start -- --localhost` を実行し、`127.0.0.1:8081` の応答を確認した。`adb reverse tcp:8081 tcp:8081` を設定し、開発クライアントを `exp+liki://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081` で開いた。
 
 ## 依存関係の監査
 
