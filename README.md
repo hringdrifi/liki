@@ -2,9 +2,17 @@
 
 ![Liki: AndroidスマホをBluetoothキーボードとトラックパッドに](artwork/play/feature-graphic-1024x500.png)
 
-Pocket HIDとしてAndroidスマホをBluetooth HIDのキーボード兼マウスにするアプリです。PCへの常駐ソフトは不要です。
+スマホをBluetoothキーボード兼マウス・トラックパッドとして使うReact Native / Expoアプリです。AndroidはBluetooth HID Device、iOSはCoreBluetoothのBLE HID（HID over GATT）を使用します。PCへの常駐ソフトは不要です。
+
+## ダウンロード
+
+[GitHub Releases](https://github.com/hringdrifi/liki/releases) でAndroid用の署名済みAPKと対応ソースを公開します。配布APKはJavaScriptを同梱しており、開発サーバーなしで起動できます。署名付きIPAは配布しません。iOSは各自のApple Developerアカウントと署名環境でビルドしてください。
+
+v1.0.3から現在のExpo版へ移行しています。旧Android版・Flutter版の設定や保存レイアウトは引き継がず、初期設定から開始します。Expo版で保存した設定とレイアウトは次回起動時にも復元されます。
 
 ## 動作条件
+
+### Android
 
 - Android 9（API 28）以上で、端末が `BluetoothHidDevice` に対応し、OS側でBluetooth HID Deviceサービスが有効になっていること
 - Bluetooth HIDホストとしてペアリングできるPC（Windows、macOS、Linuxなど）
@@ -14,7 +22,16 @@ AndroidのバージョンとBluetooth搭載の条件を満たしていても、H
 
 「HIDサービスを準備中…」のまま進まない場合は、端末側のHID Deviceサービスを利用できていない可能性があります。Fireタブレット（KFMAWI、Fire OSビルド `PS7331.4463N`）では、サービスに接続できず、ADBからの有効化もOSの権限で拒否されることを確認しています。通常の開発者オプションにはBluetooth HID Deviceサービスを有効にする設定はありません。
 
-## 使い方
+### iOS
+
+- iOS 16.4以上、arm64。作成したIPAの最低OS設定でも確認しています。
+- iPhone 8 / 8 Plus / X、iPhone SE第2世代以降などがOS条件上の対象です。iPhone 7以前とSE第1世代は対象外です。古い機種での実機動作は未検証です。[Appleの対応機種一覧](https://support.apple.com/en-ie/103267)
+- iPhoneのBluetoothを有効にし、LikiのBluetoothアクセスとペアリングを許可します。接続先はBluetooth LEのHID over GATTに対応している必要があります。
+- 独自のiOSネイティブモジュールを含む署名済みビルドが必要です。Expo Goは使用できません。Ad Hoc開発ビルドは端末登録が必要で、iOSで要求されたら開発者モードを有効にします。
+
+iOS版のビルドと実機起動を確認しています。実際のペアリング・キー入力・マウス操作の動作範囲は、機種と接続先ごとの確認が必要です。
+
+## Androidでの使い方
 
 1. Android端末でアプリを起動し、Bluetooth接続とBluetooth公開の権限を許可します。
 2. 接続画面で「ペアリング待機」を押します。
@@ -36,7 +53,7 @@ AndroidのバージョンとBluetooth搭載の条件を満たしていても、H
 
 通常画面でキーをタップするとHIDキーを送ります。Ctrl、Shift、Alt、Win/Cmdはタップすると次のキーまで保持されます。割り当てを変えるには右端メニューの「キー割り当てを編集」を選びます。設定モードでは上部のレイヤーボタンで編集先を選び、キーをタップして割り当てます。「保存」で変更を確定し、「キャンセル」で破棄します。ラベルから推測できないキーは枠が赤く表示され、設定モードで割り当てが必要です。レイアウトと保存した割り当ては端末内に保存されます。
 
-画面左上の小さな表示で現在のレイヤー（L0〜L2）を確認できます。レイヤー0が通常の割り当てです。レイヤー1・2では未設定のキーはレイヤー0を継承し、設定モードの「ベースを継承」で個別の割り当てを解除します。キーには「レイヤー1/2切り替え」（同じレイヤーでもう一度押すと0へ戻る）、「次のレイヤー」（0→1→2→0）、「次の1キーだけレイヤー1/2」、「押している間レイヤー1/2」（QMKの `MO` に相当）、または「レイヤー0へ戻る」を割り当てられます。レイヤー切り替えに使ったキーは、効果が続く間だけShiftと同じ色で表示されます。「押している間」は1本の指でキーを押さえ、もう1本の指で別のキーをタップします。指を離すと元のレイヤーに戻ります。次の1キーだけの切り替えは、通常のキーを入力すると元のレイヤーに戻り、修飾キーだけでは戻りません。レイヤーごとの割り当ては端末内に保存されます。
+画面左上の小さな表示で現在のレイヤー（L0〜L3）を確認できます。レイヤー0が通常の割り当てです。レイヤー1〜3では未設定のキーはレイヤー0を継承し、設定モードの「ベースを継承」で個別の割り当てを解除します。キーには「レイヤー1/2/3切り替え」（同じレイヤーでもう一度押すと0へ戻る）、「次のレイヤー」（0→1→2→3→0）、「次の1キーだけレイヤー1/2/3」、「押している間レイヤー1/2/3」（QMKの `MO` に相当）、または「レイヤー0へ戻る」を割り当てられます。レイヤー切り替えに使ったキーは、効果が続く間だけShiftと同じ色で表示されます。「押している間」は1本の指でキーを押さえ、もう1本の指で別のキーをタップします。指を離すと元のレイヤーに戻ります。次の1キーだけの切り替えは、通常のキーを入力すると元のレイヤーに戻り、修飾キーだけでは戻りません。レイヤーごとの割り当ては端末内に保存されます。
 
 キー割り当ての1段目は、先頭の「文字・数字」「記号」「基本キー」に続いて「修飾キー付き」「メディアキー」などのカテゴリから選びます。「修飾キー付き」では `LSFT` などの修飾キー、続けて `A` などの通常キーを選ぶと `LSFT(A)` のように割り当てられます。「修飾キーを追加…」から `LSFT(LCTL(A))` のような組み合わせも作れます。左右の `LCTL`、`LSFT`、`LALT`、`LGUI`、`RCTL`、`RSFT`、`RALT`、`RGUI` に対応します。KLEラベルには `LSFT(KC_A)` のような式を書いて自動割り当てもできます。「メディアキー」には再生／一時停止、前後の曲、停止、音量上下、ミュートをまとめています。メディアキーはConsumer Control HIDレポートとして送ります。既にペアリングしたPCでメディアキーが認識されない場合は、PCと端末のペアリングを解除してから再ペアリングしてください。
 
@@ -48,9 +65,20 @@ KLEはキーの表示・配置形式であり、HIDコードを直接指定し�
 
 接続できないときは、両機器のペアリングを解除してからアプリを開いた状態で再ペアリングしてください。端末メーカーがHID Deviceプロファイルを提供していない場合、このアプリでは利用できません。
 
-## React Native / Expo（このブランチ）
+## iOSでの使い方
 
-main `2c2f3f4` を基点に、React Native + Expo + expo-dev-client で移植しています。プロジェクトはリポジトリ直下に置き、画面と操作は TypeScript、Android HIDとKLE解析は `modules/liki-hid/` にまとめています。旧Android版・Flutter版の設定は引き継がず、初期設定から開始します。Expo版で変更した設定や保存レイアウトは次回起動時にも復元されます。
+1. 署名した開発ビルドをiPhoneへインストールし、Metroへ接続してLikiを開きます。
+2. Bluetooth権限を許可し、必要に応じて「BLEペアリング待機」を押します。
+3. PCのBluetooth設定から「Liki」を追加して、ペアリング要求を承認します。iOS側からペアリング済みPCの一覧取得・接続開始はできません。
+4. 接続後はAndroid版と同じキーボード・トラックパッド画面を使います。右端中央から左へスワイプするとメニューが開きます。使用中はLikiを前面に置いてください。
+
+iOSのBLE HID実装は [darwin-bt-remote](https://github.com/jqssun/darwin-bt-remote) を基にしています。署名用の資格情報・端末情報・IPAの配布リンクは公開しません。
+
+## 開発とビルド
+
+プロジェクトはリポジトリ直下に置き、画面と操作はTypeScript、Android HIDはKotlin、iOS BLE HIDはSwiftで実装しています。ネイティブモジュールは `modules/liki-hid/` にあります。
+
+AndroidのローカルビルドにはNode.js 24、JDK 21、Android SDK Platform / Build-Tools 37、CMake 3.31.6を使用しています。
 
 ```powershell
 npm ci
@@ -66,7 +94,15 @@ cd android
 
 開発クライアントでの実行にはリポジトリ直下で `npm start` を使います。Expo Goは独自のHIDモジュールを含まないため利用できません。MacなしでのEASビルドの手順と現在の検証範囲は [Expo移植メモ](docs/expo-port.md) を参照してください。
 
-iOSには [darwin-bt-remote](https://github.com/jqssun/darwin-bt-remote) を基にしたCoreBluetoothのBLE HID（HID over GATT）を追加しています。PCのBluetooth設定から「Liki」を追加し、iPhone側でBluetooth権限とペアリングを許可します。iOS側からペアリング済みPCの一覧取得・接続開始はできません。ネイティブモジュールを含むiOS開発ビルドの再インストールが必要です。PCとの実際のペアリング・入力は検証が必要です。
+WindowsからiOS開発ビルドを作る場合は、Expoへログインし、自分のApple Developerアカウントで署名と端末登録を設定したうえでEASを使います。
+
+```powershell
+npx --yes eas-cli@latest device:create
+npx --yes eas-cli@latest build --platform ios --profile development
+npm start -- --lan
+```
+
+端末登録のWebsite方式では、表示URLを対象iPhoneのSafariで開きます。ビルド後はインストールページをiPhoneで開いてインストールします。開発クライアントの起動時は、iPhoneとPCを同じネットワークに接続し、PCのWi-Fi側IPのMetroへ接続してください。キー・マウス入力そのものはBluetoothで送信します。ネイティブコードを変更した場合は再ビルドが必要です。
 
 比較用のFlutter版は `codex/flutter-faithful-port`（`1987ee2`）にあります。実機へのインストール・起動・操作画面の表示まで確認済みです。
 
@@ -74,4 +110,4 @@ Android 12以降ではBluetooth接続・公開の実行時権限を要求しま�
 
 ## ライセンス
 
-この移植ブランチは [GNU AGPL v3.0 or later](LICENSE)（SPDX: `AGPL-3.0-or-later`）で公開しています。GNU Affero GPLバージョン3、または希望によりそれ以降のバージョンを適用できます。配布するAPKに対応するソースコードは、このリポジトリの同じバージョンから取得できます。
+本プロジェクトは [GNU AGPL v3.0 or later](LICENSE)（SPDX: `AGPL-3.0-or-later`）で公開しています。GNU Affero GPLバージョン3、または希望によりそれ以降のバージョンを適用できます。配布するAPKに対応するソースコードは、このリポジトリの同じバージョンから取得できます。第三者コードの出典とライセンスは [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) を参照してください。
