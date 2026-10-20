@@ -98,6 +98,23 @@ test('viewport fitting preserves physical size on rotation and reset fits the ne
   await m.resetView(); assert.ok(Math.abs(m.geometry!.base - 620 / 3) < 1e-8);
 });
 const pointer = (g: KeyboardGesture, kind: 'down' | 'move' | 'up' | 'cancel', id: number, p: Point, time: number) => g.touch({ kind, id, position: p, time });
+test('layout replacement and restore remain visible without another viewport event', async () => {
+  const { m } = await fixture();
+  m.setViewport(m.geometry!, 360, 640);
+  await m.saveLayout('Visible');
+  const saved = m.saved[0];
+  const visible = () => {
+    const g = m.geometry!;
+    assert.equal(g.width, 360); assert.equal(g.height, 640);
+    for (const key of m.keys) {
+      const center = { x: g.origin.x + (key.x + key.w / 2) * g.scale, y: g.origin.y + (key.y + key.h / 2) * g.scale };
+      assert.ok(center.x > 0 && center.x < 360 && center.y > 0 && center.y < 640);
+      assert.equal(g.hit(center)?.index, key.index);
+    }
+  };
+  for (const layout of ['other', 'fixture']) { await m.applyLayout(layout); visible(); }
+  await m.restoreLayout(saved); visible();
+});
 test('momentary chord keeps captured layer if holding pointer lifts first', async () => {
   const { m, sent } = await fixture(); m.geometry!.width = 300; m.geometry!.height = 100; m.geometry!.base = 80;
   m.overrides[0] = 'hold3'; m.layers[3] = { 1: 'A' }; const g = new KeyboardGesture(m, () => {});

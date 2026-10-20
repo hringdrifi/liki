@@ -137,7 +137,9 @@ export class LikiModel {
   async readLayout(value: string) {
     const parsed = await this.call('parse', { json: value }), inferred = JSON.parse(parsed.inferred);
     for (const name of Object.values(inferred)) await this.resolve(String(name));
+    const width = this.geometry?.width ?? 0, height = this.geometry?.height ?? 0;
     this.json = value; this.layoutName = parsed.name; this.keys = parsed.keys; this.geometry = new Geometry(this.keys); this.inferred = inferred;
+    this.setViewport(this.geometry, width, height);
   }
   async resolve(name: string): Promise<Binding | undefined> {
     if (!this.bindings.has(name)) { const b = await this.call('binding', { name }); if (b) this.bindings.set(name, b); }
