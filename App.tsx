@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, Pressable, Modal, TextInput, Alert, BackHandler, AppState, ActivityIndicator } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { backend, unavailable } from './src/native';
 import { LikiModel } from './src/model';
 import type { KeyShape, Data } from './src/model';
@@ -13,6 +13,7 @@ type Dialog = { title: string; items: string[]; resolve(value: number | null): v
 
 export default function App() { return <SafeAreaProvider><Liki /></SafeAreaProvider>; }
 function Liki() {
+  const insets = useSafeAreaInsets();
   const model = useRef(new LikiModel(backend)).current, [, render] = useState(0);
   const [menu, setMenu] = useState(false), [dialog, setDialog] = useState<Dialog | null>(null);
   const menuStart = useRef({ x: 0, y: 0 });
@@ -105,13 +106,8 @@ function Liki() {
           <View style={{ flex: 1 }}><Button title="保存" onPress={() => run(() => model.endEdit(true))} /></View></View></>}
       {model.geometry && <Keyboard model={model} onEdit={key => run(() => editBinding(key))} />}
     </View>
-    {!model.editing && <><View pointerEvents="none" style={{ position: 'absolute', top: 12, left: 12, backgroundColor: colors.surface, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
-      <Text accessibilityLabel={`現在のレイヤー ${model.layer}`} style={[styles.text, { fontSize: 12, fontWeight: 'bold' }]}>L{model.layer}{model.oneShotReturn !== undefined ? '・1回' : ''}</Text></View>
-      <View style={{ position: 'absolute', right: 0, top: '50%', marginTop: -54, height: 108, width: 24, justifyContent: 'center', alignItems: 'flex-end' }}
-        accessibilityLabel="右端中央から左へスワイプしてメニューを開く"
-        onTouchStart={e => { menuStart.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY }; }}
-        onTouchMove={e => { const dx = e.nativeEvent.pageX - menuStart.current.x, dy = e.nativeEvent.pageY - menuStart.current.y; if (dx < -42 && Math.abs(dx) > Math.abs(dy) * 1.25) setMenu(true); }}>
-        <View style={{ backgroundColor: colors.accent, width: 3, height: 48, borderRadius: 2, marginRight: 2 }} /></View></>}
+    {!model.editing && <View pointerEvents="none" style={{ position: 'absolute', top: 12, left: 12, backgroundColor: colors.surface, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+      <Text accessibilityLabel={`現在のレイヤー ${model.layer}`} style={[styles.text, { fontSize: 12, fontWeight: 'bold' }]}>L{model.layer}{model.oneShotReturn !== undefined ? '・1回' : ''}</Text></View>}
   </View>;
   const connecting = model.status.connecting, cancelling = model.status.cancelling;
   const connection = <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 24 }}>
@@ -132,6 +128,13 @@ function Liki() {
     {unavailable ? <View style={{ padding: 20 }}><Text style={styles.text}>{unavailable}</Text></View> : model.error ? <View style={{ padding: 20 }}><Text style={styles.text}>初期化できません: {model.error}</Text>
       <Button title="再試行" onPress={() => run(() => model.initialize())} /></View> : !model.initialized ? <ActivityIndicator color={colors.accent} /> :
       model.settingsVisible ? <Settings model={model} onBack={() => { model.settingsVisible = false; model.syncPage(); model.changed(); }} onPrivacy={privacy} choose={choose} prompt={prompt} run={run} /> : model.showingControls ? controls : connection}
+    {model.showingControls && !model.settingsVisible && !model.editing && <View
+      style={{ position: 'absolute', right: 0, top: '50%', marginTop: -54, height: 108, width: 24 + insets.right, justifyContent: 'center', alignItems: 'flex-end' }}
+      accessibilityLabel="右端中央から左へスワイプしてメニューを開く"
+      onTouchStart={e => { menuStart.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY }; }}
+      onTouchMove={e => { const dx = e.nativeEvent.pageX - menuStart.current.x, dy = e.nativeEvent.pageY - menuStart.current.y; if (dx < -42 && Math.abs(dx) > Math.abs(dy) * 1.25) setMenu(true); }}>
+      <View style={{ backgroundColor: colors.accent, width: 3, height: 48, borderRadius: 2, marginRight: insets.right + 2 }} />
+    </View>}
     {menu && model.showingControls && <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, flexDirection: 'row' }}>
       <Pressable accessibilityLabel="メニューを閉じる" style={{ flex: 1, backgroundColor: '#00000096' }} onPress={() => setMenu(false)} />
       <ScrollView style={{ width: '80%', maxWidth: 300, backgroundColor: colors.surface }} contentContainerStyle={{ padding: 12 }}>
