@@ -7,6 +7,7 @@ module.exports = {
   ios: { bundleIdentifier: 'jp.liki.pockethid', supportsTablet: true },
   plugins: [
     'expo-dev-client',
+    ['expo-splash-screen', { backgroundColor: '#10151c', image: './artwork/adaptive-icon-foreground.png', imageWidth: 180, resizeMode: 'contain' }],
     ['expo-build-properties', { android: { minSdkVersion: 28, compileSdkVersion: 37, targetSdkVersion: 36, cmakeVersion: '3.31.6' } }],
     './plugins/with-liki',
   ],
