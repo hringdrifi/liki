@@ -26,7 +26,7 @@
   "scripts": {
     "start": "expo start --dev-client",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test test/parity.test.ts test/ios.test.ts test/android-plugin.test.cjs",
+    "test": "node --experimental-strip-types --test test/parity.test.ts test/ios.test.ts test/android-plugin.test.cjs test/zmk.test.ts",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",

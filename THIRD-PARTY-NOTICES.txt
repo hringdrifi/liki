@@ -7,6 +7,11 @@ The HIDProfile.swift, HIDReports.swift and HIDPeripheral.swift files in
 modules/liki-hid/ios derive from this project. Changes are marked in the files.
 The full upstream license is in modules/liki-hid/ios/LICENSE.darwin-bt-remote.txt.
 
+ZMK Studio RPC message schema used by src/zmk.ts
+https://github.com/zmkfirmware/zmk-studio-messages
+Copyright (c) 2024 The ZMK Contributors
+License: MIT (permission and disclaimer text below)
+
 Expo blank TypeScript template and generated assets
 
 The MIT License (MIT)

@@ -18,6 +18,16 @@ final class MouseRelay {
     private var inputs: [ObjectIdentifier: Input] = [:]
     private var enabled = false
     private var generation = 0
+    private var movementEvents = 0, forwardedMovements = 0, buttonEvents = 0, scrollEvents = 0
+
+    var diagnostics: [String: Any] {
+        ["enabled": enabled, "active": UIApplication.shared.applicationState == .active,
+         "connected": connected(), "detectedMice": GCMouse.mice().count,
+         "attachedMice": inputs.count, "movementEvents": movementEvents,
+         "forwardedMovements": forwardedMovements, "buttonEvents": buttonEvents, "scrollEvents": scrollEvents,
+         "handlersInstalled": inputs.values.filter { $0.profile.mouseMovedHandler != nil }.count,
+         "currentProfiles": inputs.values.filter { $0.profile === $0.mouse.mouseInput }.count]
+    }
 
     init(connected: @escaping () -> Bool, send: @escaping (Int, Int, Int, Int) -> Void, changed: @escaping () -> Void) {
         self.connected = connected; self.send = send; self.changed = changed
@@ -58,18 +68,22 @@ final class MouseRelay {
             inputs[ObjectIdentifier(mouse)] = input
             profile.mouseMovedHandler = { [weak self, weak input] _, dx, dy in
                 MainActor.assumeIsolated {
-                    guard let self, let input, self.active(token), dx.isFinite, dy.isFinite else { return }
+                    guard let self else { return }
+                    self.movementEvents += 1
+                    guard let input, self.active(token), dx.isFinite, dy.isFinite else { return }
                     // GameController uses positive Y upwards; HID uses positive Y downwards.
                     input.x += dx; input.y -= dy
                     let x = Int(input.x), y = Int(input.y)
                     input.x -= Float(x); input.y -= Float(y)
-                    if x != 0 || y != 0 { self.send(self.buttons, x, y, 0) }
+                    if x != 0 || y != 0 { self.forwardedMovements += 1; self.send(self.buttons, x, y, 0) }
                 }
             }
             for (button, mask) in [(profile.leftButton, 1), (profile.rightButton, 2), (profile.middleButton, 4)] {
                 button?.pressedChangedHandler = { [weak self, weak input] _, _, down in
                     MainActor.assumeIsolated {
-                        guard let self, let input, self.active(token) else { return }
+                        guard let self else { return }
+                        self.buttonEvents += 1
+                        guard let input, self.active(token) else { return }
                         if down { input.buttons |= mask } else { input.buttons &= ~mask }
                         self.send(self.buttons, 0, 0, 0)
                     }
@@ -77,7 +91,9 @@ final class MouseRelay {
             }
             profile.scroll.yAxis.valueChangedHandler = { [weak self, weak input] _, value in
                 MainActor.assumeIsolated {
-                    guard let self, let input, self.active(token), value.isFinite else { return }
+                    guard let self else { return }
+                    self.scrollEvents += 1
+                    guard let input, self.active(token), value.isFinite else { return }
                     input.wheel += value
                     let wheel = Int(input.wheel); input.wheel -= Float(wheel)
                     if wheel != 0 { self.send(self.buttons, 0, 0, wheel) }

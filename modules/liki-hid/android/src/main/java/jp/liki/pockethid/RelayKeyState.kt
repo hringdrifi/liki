@@ -17,6 +17,7 @@ internal class RelayKeyState {
     fun remove(device: Int) { keys.remove(device); consumers.keys.removeAll { it.first == device } }
     fun clear() { keys.clear(); consumers.clear() }
     fun consumerUsage(): Int = consumers.values.lastOrNull() ?: 0
+    fun pressedUsages(): List<Int> = keys.values.flatten().distinct()
     fun keyboardReport(): ByteArray {
         val pressed = keys.values.flatten().toSet()
         val modifiers = pressed.filter { it in 0xe0..0xe7 }.fold(0) { result, usage -> result or (1 shl (usage - 0xe0)) }

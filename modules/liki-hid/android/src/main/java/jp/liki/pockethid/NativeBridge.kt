@@ -40,7 +40,9 @@ internal class NativeBridge(
         context.mainExecutor.execute { onStatus(status, connected) }
     }
     private val relay = ExternalKeyboardRelay(context, { hid.isConnected() }, hid::keyboardReport, hid::consumerReport,
-        hid::relayMouse, { activityProvider()?.window?.decorView }, ::publish)
+        hid::relayMouse, { activityProvider()?.window?.decorView }, { publish(); if (relayRequested) studio.retry() },
+        { pressed, consumer -> emit(mapOf("relayInput" to mapOf("pressed" to pressed, "consumer" to consumer))) })
+    private val studio = StudioTransport(context) { emit(it) }
 
     private fun onStatus(status: String, connected: Boolean) {
         if (!connected) relay.release()
@@ -66,6 +68,8 @@ internal class NativeBridge(
                 "privacy" to context.getString(R.string.privacy_policy_text), "status" to status(), "session" to LikiSession.value) }
             "session" -> { LikiSession.value = string("value"); null }
             "status" -> status()
+            "studioRetry" -> { studio.retry(); null }
+            "studioWrite" -> { studio.write((args["bytes"] as? List<*>)?.map { (it as Number).toInt() } ?: emptyList()); null }
             "ready" -> { ensureReady(); null }
             "discoverable" -> { discoverable(); null }
             "connect", "cancelConnection" -> error("BLE HIDはPC側のBluetooth設定から接続してください")
@@ -105,6 +109,7 @@ internal class NativeBridge(
                 val requested = args["relay"] == true && controls && !settingsPage
                 if (relayRequested != requested) { hid.releaseInputs(); relayRequested = requested }
                 relay.enable(requested)
+                studio.enable(requested)
                 applyWindowSettings(); null
             }
             else -> error("Unknown HID command: $method")
@@ -135,6 +140,7 @@ internal class NativeBridge(
         applyWindowSettings()
     }
     fun pause() {
+        studio.enable(false)
         relay.foreground(false)
         hid.releaseInputs()
     }
@@ -145,6 +151,7 @@ internal class NativeBridge(
         relay.foreground(focused); relay.focus(focused)
     }
     fun detach() {
+        studio.close()
         pause()
         observedView?.removeOnLayoutChangeListener(layoutListener); observedView = null
         pendingPicker?.reject("liki", "画面が閉じられました", null); pendingPicker = null

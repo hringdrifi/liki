@@ -27,7 +27,7 @@ public class LikiHidModule: Module {
             MainActor.assumeIsolated { self.backend().pickFile(promise) }
         }.runOnQueue(.main)
         OnAppEntersBackground {
-            MainActor.assumeIsolated { self.bridge?.releaseInputs() }
+            MainActor.assumeIsolated { self.bridge?.background() }
         }
         OnDestroy {
             DispatchQueue.main.async { self.bridge?.close(); self.bridge = nil }
@@ -63,11 +63,16 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
     private var wasConnected = false
     private var errorMessage: String?
     private var relayRequested = false
+    private lazy var studio = StudioTransport { [weak self] in self?.emit($0) }
     private lazy var relay = KeyboardRelay(connected: { [weak self] in self?.connected == true },
         send: { [weak self] modifiers, keys in
-            guard let self, self.connected else { return }
-            self.hid.sendKeyboard(modifiers: modifiers, codes: keys)
-        }, changed: { [weak self] in self?.publish() })
+            guard let self else { return }
+            self.emit(["relayInput": ["pressed": keys + (0..<8).filter { modifiers & (1 << $0) != 0 }.map { 0xe0 + $0 }, "consumer": 0]])
+            if self.connected { self.hid.sendKeyboard(modifiers: modifiers, codes: keys) }
+        }, changed: { [weak self] in
+            guard let self else { return }; self.publish()
+            if self.relayRequested { self.studio.retry() }
+        })
     private lazy var mouseRelay = MouseRelay(connected: { [weak self] in self?.connected == true },
         send: { [weak self] buttons, x, y, wheel in
             guard let self, self.connected else { return }
@@ -166,6 +171,15 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
                     """] as [String: Any?]
         case "session": session = args["value"] as? String
         case "status": return status
+        #if DEBUG
+        case "relayDiagnostics": return ["mouse": mouseRelay.diagnostics, "studio": studio.diagnostics]
+        #endif
+        case "studioRetry": studio.retry()
+        case "studioWrite":
+            guard let bytes = args["bytes"] as? [NSNumber], !bytes.isEmpty else {
+                throw NSError(domain: "Liki", code: 10, userInfo: [NSLocalizedDescriptionKey: "Studioの送信データを変換できません"])
+            }
+            try studio.write(bytes.map { UInt8(clamping: $0.intValue) })
         case "asset": return try asset(args["name"] as? String ?? "")
         case "ready", "discoverable": start()
         case "connect": throw NSError(domain: "Liki", code: 2, userInfo: [NSLocalizedDescriptionKey: "PCのBluetooth設定からLikiに接続してください"])
@@ -188,6 +202,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
             let requested = args["relay"] as? Bool == true && controls && !settingsPage
             if relayRequested != requested { releaseInputs(); relayRequested = requested }
             relay.enable(requested); mouseRelay.enable(requested); applyWindowSettings()
+            studio.enable(requested)
         case "setting":
             let key = args["key"] as? String ?? ""
             guard settingsDefaults[key] != nil || (0...3).contains(where: { key == "layer_border_color_\($0)" }),
@@ -299,6 +314,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         } catch { promise?.reject("liki", error.localizedDescription) }
     }
     func close() {
+        studio.close()
         relay.close()
         mouseRelay.close()
         releaseInputs(); hid.disconnect(); central?.delegate = nil; central = nil; observation = nil
@@ -306,4 +322,5 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         LikiAppDelegateSubscriber.orientations = .allButUpsideDown
         pickerPromise?.reject("liki", "画面が閉じられました"); pickerPromise = nil
     }
+    func background() { studio.enable(false); releaseInputs() }
 }

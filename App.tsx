@@ -6,6 +6,7 @@ import { backend, unavailable } from './src/native';
 import { LikiModel } from './src/model';
 import type { KeyShape, Data } from './src/model';
 import { Keyboard, colors } from './src/Keyboard';
+import { StudioKeyboard } from './src/StudioKeyboard';
 import { Settings, Button, Section, styles } from './src/Settings';
 import type { Choose, Prompt } from './src/Settings';
 
@@ -101,14 +102,14 @@ function Liki() {
     });
     const at = await choose(names[i], options.map(b => b.name)); if (at !== null) await model.assign(key, options[at].name);
   };
-  const controls = model.relayMode ? <ScrollView contentContainerStyle={{ padding: 24, gap: 16 }}>
+  const controls = model.relayMode ? <View style={{ flex: 1 }}><ScrollView style={{ flexGrow: 0, maxHeight: '40%' }} contentContainerStyle={{ padding: 24, gap: 16 }}>
     <Text style={[styles.text, { fontSize: 24, fontWeight: 'bold' }]}>キーボード・マウスを中継</Text>
     <Text style={styles.text}>PC: {model.status.message}</Text>
     <Section title="接続された入力デバイス" />
     {model.status.keyboards?.length ? model.status.keyboards.map((device: { id: string | number; name: string }) =>
       <Text style={styles.text} key={device.id}>● {device.name}</Text>) :
       <Text style={styles.text}>スマホにキーボードやマウスを接続してください。</Text>}
-  </ScrollView> : <View style={{ flex: 1 }}>
+  </ScrollView><StudioKeyboard model={model} /></View> : <View style={{ flex: 1 }}>
     <View style={{ flex: 1, padding: 8 }}>
       {model.editing && <><View style={{ flexDirection: 'row' }}>{[0, 1, 2, 3].map(i => <View style={{ flex: 1, opacity: i === model.editLayer ? 1 : .55 }} key={i}>
         <Button title={`レイヤー ${i}`} onPress={() => { model.editLayer = i; model.changed(); }} /></View>)}</View>

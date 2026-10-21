@@ -1,3 +1,4 @@
+import { StudioClient } from './zmk.ts';
 export type Data = Record<string, any>;
 export type Point = { x: number; y: number };
 export type Binding = { name: string; code: number; modifier: number; layer: number; action: string; consumer: number };
@@ -61,6 +62,8 @@ export class LikiModel {
   selectedName?: string; selectedAddress?: string; overrides: Data = {}; layers: Data = {}; inferred: Data = {};
   density = 1; xdpi = 160; initialized = false; editing = false; settingsVisible = false; showingControls = false;
   relayMode = false; relayPaused = false;
+  readonly studio = new StudioClient(bytes => this.call('studioWrite', { bytes }), () => this.listeners.forEach(fn => fn()));
+  relayPressed: number[] = []; relayConsumer = 0;
   layer = 0; editLayer = 0; modifiers = 0; layerKey?: number; oneShotReturn?: number; oneShotKey?: number;
   momentaryPrevious?: number; momentaryKey?: number; momentaryTarget?: number; baseSnapshot?: string; layersSnapshot?: string;
   onError: (e: unknown) => void = () => {};
@@ -106,15 +109,28 @@ export class LikiModel {
     } catch (e) { this.error = String(e); this.changed(); }
   }
   acceptStatus(status: Data) {
+    if (status.studioBytes) { this.studio.receive(status.studioBytes); return; }
+    if (status.studioState) {
+      this.studio.reset(status.studioState.message);
+      if (status.studioState.ready) void this.studio.load();
+      return;
+    }
+    if (status.relayInput) {
+      this.relayPressed = status.relayInput.pressed; this.relayConsumer = status.relayInput.consumer;
+      this.listeners.forEach(fn => fn()); return;
+    }
     this.status = status;
     if (this.connected !== this.showingControls && !status.restoring) { this.showingControls = this.connected; this.settingsVisible = false; this.syncPage(); }
     if (!this.devices.some(d => d.address === this.selectedAddress)) this.selectedAddress =
       this.devices.some(d => d.address === status.lastAddress) ? status.lastAddress : this.devices[0]?.address;
     this.changed();
   }
-  async refresh() { this.acceptStatus(await this.call('status')); }
-  syncPage() { this.send('page', { controls: this.showingControls, settings: this.settingsVisible,
-    relay: this.relayMode && !this.relayPaused && !this.editing && !this.settingsVisible && this.showingControls }); }
+  async refresh() { this.acceptStatus(await this.call('status')); this.syncPage(); }
+  syncPage() {
+    const relay = this.relayMode && !this.relayPaused && !this.editing && !this.settingsVisible && this.showingControls;
+    if (!relay) { this.relayPressed = []; this.relayConsumer = 0; }
+    this.send('page', { controls: this.showingControls, settings: this.settingsVisible, relay });
+  }
   async setRelayMode(enabled: boolean) {
     if (enabled && this.status.relaySupported !== true) throw Error('外付けキーボードの中継に対応したネイティブビルドをインストールしてください');
     await this.persist({ input_mode: enabled ? 'relay' : null });
@@ -233,5 +249,5 @@ export class LikiModel {
     if (this.selectedName?.toLowerCase() === name.toLowerCase()) { values.selected_saved_layout_name = null; this.selectedName = undefined; }
     await this.persist(values); this.changed();
   }
-  dispose() { this.subscription?.remove(); this.listeners.clear(); }
+  dispose() { this.subscription?.remove(); this.listeners.clear(); this.studio.reset(); }
 }

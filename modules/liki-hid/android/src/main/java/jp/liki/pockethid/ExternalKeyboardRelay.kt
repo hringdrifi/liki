@@ -26,7 +26,8 @@ internal class ExternalKeyboardRelay(
     private val consumer: (Int) -> Unit,
     private val mouse: (Int, Int, Int, Int) -> Unit,
     private val windowView: () -> View?,
-    private val changed: () -> Unit
+    private val changed: () -> Unit,
+    private val inputChanged: (List<Int>, Int) -> Unit
 ) : InputManager.InputDeviceListener {
     private val input = context.getSystemService(InputManager::class.java)
     private val state = RelayKeyState()
@@ -55,8 +56,8 @@ internal class ExternalKeyboardRelay(
     fun enable(value: Boolean) { if (enabled != value) { release(); enabled = value }; updateCapture() }
     fun foreground(value: Boolean) { if (foreground != value) { release(); foreground = value }; updateCapture() }
     fun focus(value: Boolean) { if (focused != value) { release(); focused = value }; updateCapture() }
-    fun release() { state.clear(); mouseState.clear(); if (enabled) { keyboard(state.keyboardReport()); consumer(0); mouse(0, 0, 0, 0) } }
-    private fun send() { keyboard(state.keyboardReport()); consumer(state.consumerUsage()) }
+    fun release() { state.clear(); mouseState.clear(); inputChanged(emptyList(), 0); if (enabled) { keyboard(state.keyboardReport()); consumer(0); mouse(0, 0, 0, 0) } }
+    private fun send() { keyboard(state.keyboardReport()); consumer(state.consumerUsage()); inputChanged(state.pressedUsages(), state.consumerUsage()) }
     private fun send(report: RelayMouseState.Report) { mouse(report.buttons, report.x, report.y, report.wheel) }
 
     fun updateCapture() {
