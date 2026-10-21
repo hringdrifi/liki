@@ -62,6 +62,19 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
     private var isStarting = false
     private var wasConnected = false
     private var errorMessage: String?
+    private var relayRequested = false
+    private lazy var relay = KeyboardRelay(connected: { [weak self] in self?.connected == true },
+        send: { [weak self] modifiers, keys in
+            guard let self, self.connected else { return }
+            self.hid.sendKeyboard(modifiers: modifiers, codes: keys)
+        }, changed: { [weak self] in self?.publish() })
+    private lazy var mouseRelay = MouseRelay(connected: { [weak self] in self?.connected == true },
+        send: { [weak self] buttons, x, y, wheel in
+            guard let self, self.connected else { return }
+            if self.buttons != buttons { self.flushMouse(); self.buttons = buttons; self.mouse(0, 0, 0) }
+            if x != 0 || y != 0 { self.move(x, y) }
+            if wheel != 0 { self.flushMouse(); self.mouse(0, 0, wheel) }
+        }, changed: { [weak self] in self?.publish() })
 
     private let settingsDefaults: [String: Any] = [
         "sticky_modifiers": true, "kle_json_key_labels": true, "pinch_zoom": true, "drag_move_keyboard": true,
@@ -77,6 +90,8 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         observation = hid.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.publish() }
         }
+        _ = relay
+        _ = mouseRelay
     }
     private var preferences: [String: String] { defaults.dictionary(forKey: "liki.expo_layout") as? [String: String] ?? [:] }
     private var storedSettings: [String: Any] { defaults.dictionary(forKey: "liki.expo_settings") ?? [:] }
@@ -101,6 +116,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         else { message = "Bluetoothを準備中…" }
         return ["message": message, "connected": connected, "connecting": false, "cancelling": false,
                 "restoring": false, "registered": hid.isHIDServiceAdded,
+                "relaySupported": true, "keyboards": relay.devices + mouseRelay.devices,
                 "devices": [], "address": hid.subscribedCentrals.keys.first?.uuidString,
                 "lastAddress": preferences["last_device_address"]]
     }
@@ -167,7 +183,11 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         case "click":
             flushMouse(); buttons |= int("button"); mouse(0, 0, 0); buttons &= ~int("button"); mouse(0, 0, 0); vibrate()
         case "vibrate": vibrate()
-        case "page": controls = args["controls"] as? Bool ?? false; settingsPage = args["settings"] as? Bool ?? false; applyWindowSettings()
+        case "page":
+            controls = args["controls"] as? Bool ?? false; settingsPage = args["settings"] as? Bool ?? false
+            let requested = args["relay"] as? Bool == true && controls && !settingsPage
+            if relayRequested != requested { releaseInputs(); relayRequested = requested }
+            relay.enable(requested); mouseRelay.enable(requested); applyWindowSettings()
         case "setting":
             let key = args["key"] as? String ?? ""
             guard settingsDefaults[key] != nil || (0...3).contains(where: { key == "layer_border_color_\($0)" }),
@@ -237,6 +257,8 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         } while x != 0 || y != 0 || wheel != 0
     }
     func releaseInputs() {
+        relay.clear()
+        mouseRelay.clear()
         generation += 1; nextKeyTime = .distantPast; mouseWork?.cancel(); mouseWork = nil; pendingX = 0; pendingY = 0; buttons = 0
         hid.sendKeyboard(modifiers: 0, code: 0); hid.sendConsumer(usage: 0); hid.sendMouse(.zero)
     }
@@ -277,6 +299,8 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         } catch { promise?.reject("liki", error.localizedDescription) }
     }
     func close() {
+        relay.close()
+        mouseRelay.close()
         releaseInputs(); hid.disconnect(); central?.delegate = nil; central = nil; observation = nil
         UIApplication.shared.isIdleTimerDisabled = false
         LikiAppDelegateSubscriber.orientations = .allButUpsideDown

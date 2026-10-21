@@ -4,6 +4,8 @@
 
 スマホをBluetoothキーボード兼マウス・トラックパッドとして使うReact Native / Expoアプリです。AndroidはBluetooth HID Device、iOSはCoreBluetoothのBLE HID（HID over GATT）を使用します。PCへの常駐ソフトは不要です。
 
+この実験ブランチではAndroidの送信もBLE HID over GATTに切り替えています。Androidの動作条件・接続手順・未検証項目は[BLE HID送信の実験手順](docs/android-ble-hid.md)を参照してください。以下のAndroid HID Deviceに関する説明はmain版のものです。
+
 ## ダウンロード
 
 [GitHub Releases](https://github.com/hringdrifi/liki/releases) でAndroid用の署名済みAPKと対応ソースを公開します。配布APKはJavaScriptを同梱しており、開発サーバーなしで起動できます。署名付きIPAは配布しません。iOSは各自のApple Developerアカウントと署名環境でビルドしてください。

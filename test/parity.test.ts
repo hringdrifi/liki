@@ -98,6 +98,35 @@ test('viewport fitting preserves physical size on rotation and reset fits the ne
   await m.resetView(); assert.ok(Math.abs(m.geometry!.base - 620 / 3) < 1e-8);
 });
 const pointer = (g: KeyboardGesture, kind: 'down' | 'move' | 'up' | 'cancel', id: number, p: Point, time: number) => g.touch({ kind, id, position: p, time });
+
+test('relay mode preserves the previous layout and pauses capture for menus and settings', async () => {
+  const { m, sent, preferences } = await fixture(); m.status.relaySupported = true; m.showingControls = true;
+  const layout = m.json, bindings = { ...m.overrides };
+  await m.setRelayMode(true);
+  assert.equal(m.relayMode, true); assert.equal(preferences.input_mode, 'relay');
+  assert.equal(m.json, layout); assert.deepEqual(m.overrides, bindings); assert.equal(sent('page').at(-1)?.relay, true);
+  m.pauseRelay(true); assert.equal(sent('page').at(-1)?.relay, false);
+  m.pauseRelay(false); assert.equal(sent('page').at(-1)?.relay, true);
+  m.settingsVisible = true; m.syncPage(); assert.equal(sent('page').at(-1)?.relay, false);
+  m.settingsVisible = false; await m.setRelayMode(false);
+  assert.equal(sent('page').at(-1)?.relay, false); assert.deepEqual(m.overrides, bindings);
+});
+
+test('relay mode rejects an old native build and survives a cancelled or invalid layout import', async () => {
+  const { m, sent } = await fixture();
+  await assert.rejects(m.setRelayMode(true)); assert.equal(m.relayMode, false); assert.equal(sent('preferences').length, 0);
+  m.status.relaySupported = true; await m.setRelayMode(true);
+  await assert.rejects(m.applyLayout('invalid')); assert.equal(m.relayMode, true);
+});
+
+test('choosing an ordinary or saved layout ends relay mode', async () => {
+  const { m, sent } = await fixture(); m.status.relaySupported = true; m.showingControls = true;
+  await m.saveLayout('Previous'); const previous = m.saved[0];
+  await m.setRelayMode(true); await m.applyLayout('fixture');
+  assert.equal(m.relayMode, false); assert.equal(sent('page').at(-1)?.relay, false);
+  await m.setRelayMode(true); await m.restoreLayout(previous);
+  assert.equal(m.relayMode, false); assert.equal(m.selectedName, 'Previous');
+});
 test('layout replacement and restore remain visible without another viewport event', async () => {
   const { m } = await fixture();
   m.setViewport(m.geometry!, 360, 640);

@@ -65,7 +65,11 @@ final class HIDPeripheral: NSObject, ObservableObject {
     }
 
     func sendKeyboard(modifiers: Int, code: Int) {
-        let data = Data([UInt8(clamping: modifiers), 0, UInt8(clamping: code), 0, 0, 0, 0, 0])
+        sendKeyboard(modifiers: modifiers, codes: [code])
+    }
+
+    func sendKeyboard(modifiers: Int, codes: [Int]) {
+        let data = Data([UInt8(clamping: modifiers), 0] + (0..<6).map { UInt8(clamping: $0 < codes.count ? codes[$0] : 0) })
         broadcast(data, reportID: .keyboard)
         if let bootKeyboardInputChar { _ = updateValue(data, for: bootKeyboardInputChar) }
     }

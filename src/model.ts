@@ -60,6 +60,7 @@ export class LikiModel {
   keys: KeyShape[] = []; geometry?: Geometry; json = ''; layoutName = ''; privacy = ''; error?: string;
   selectedName?: string; selectedAddress?: string; overrides: Data = {}; layers: Data = {}; inferred: Data = {};
   density = 1; xdpi = 160; initialized = false; editing = false; settingsVisible = false; showingControls = false;
+  relayMode = false; relayPaused = false;
   layer = 0; editLayer = 0; modifiers = 0; layerKey?: number; oneShotReturn?: number; oneShotKey?: number;
   momentaryPrevious?: number; momentaryKey?: number; momentaryTarget?: number; baseSnapshot?: string; layersSnapshot?: string;
   onError: (e: unknown) => void = () => {};
@@ -89,6 +90,7 @@ export class LikiModel {
     try {
       this.subscription?.remove(); this.subscription = this.native.subscribe(s => this.acceptStatus(s));
       const data = await this.call('initialize'); this.settings = data.settings; this.preferences = data.preferences;
+      this.relayMode = this.preferences.input_mode === 'relay';
       this.density = data.density; this.xdpi = data.xdpi > 0 ? data.xdpi : this.density * 160; this.privacy = data.privacy;
       this.options = data.bindings; this.options.forEach(b => this.bindings.set(b.name, b));
       await this.readLayout(data.layout.json); this.overrides = JSON.parse(data.layout.overrides); this.layers = JSON.parse(data.layout.layers);
@@ -100,7 +102,7 @@ export class LikiModel {
         if (this.editing) { this.editLayer = clamp(s.editLayer ?? 0, 0, 3); this.baseSnapshot = s.baseSnapshot; this.layersSnapshot = s.layersSnapshot;
           this.overrides = s.overrides; this.layers = s.layers; }
       }
-      await this.resolveBindings(); this.initialized = true; this.error = undefined; this.acceptStatus(data.status); await this.call('ready');
+      await this.resolveBindings(); this.initialized = true; this.error = undefined; this.acceptStatus(data.status); this.syncPage(); await this.call('ready');
     } catch (e) { this.error = String(e); this.changed(); }
   }
   acceptStatus(status: Data) {
@@ -111,7 +113,14 @@ export class LikiModel {
     this.changed();
   }
   async refresh() { this.acceptStatus(await this.call('status')); }
-  syncPage() { this.send('page', { controls: this.showingControls, settings: this.settingsVisible }); }
+  syncPage() { this.send('page', { controls: this.showingControls, settings: this.settingsVisible,
+    relay: this.relayMode && !this.relayPaused && !this.editing && !this.settingsVisible && this.showingControls }); }
+  async setRelayMode(enabled: boolean) {
+    if (enabled && this.status.relaySupported !== true) throw Error('外付けキーボードの中継に対応したネイティブビルドをインストールしてください');
+    await this.persist({ input_mode: enabled ? 'relay' : null });
+    this.relayMode = enabled; this.editing = false; this.setLayer(0); this.syncPage(); this.changed();
+  }
+  pauseRelay(paused: boolean) { if (this.relayPaused !== paused) { this.relayPaused = paused; this.syncPage(); } }
   async setSetting(key: string, value: any) {
     this.settings = await this.call('setting', { key, value }); if (key === 'sticky_modifiers' && !value) this.modifiers = 0;
     this.fitGeometry(); this.changed();
@@ -198,6 +207,7 @@ export class LikiModel {
   }
   async applyLayout(value: string) {
     await this.readLayout(value); this.overrides = { ...this.inferred }; this.layers = {}; this.selectedName = undefined; this.setLayer(0); this.editing = false;
+    if (this.relayMode) await this.setRelayMode(false);
     await this.setSetting('auto_key_scale_px', 0);
     await this.persist({ kle_json: this.json, overrides: JSON.stringify(this.overrides), layer_overrides: '{}', selected_saved_layout_name: null }); this.changed();
   }
@@ -214,6 +224,7 @@ export class LikiModel {
     const base = JSON.parse(entry.overrides ?? '{}'), extra = JSON.parse(entry.layer_overrides ?? '{}');
     const state = new Geometry(this.keys); state.restore(entry, this.density);
     await this.readLayout(entry.kle_json); this.overrides = base; this.layers = extra; this.geometry!.zoom = state.zoom; this.geometry!.pan = state.pan;
+    if (this.relayMode) await this.setRelayMode(false);
     this.selectedName = entry.name; this.setLayer(0); await this.resolveBindings(); await this.setSetting('auto_key_scale_px', 0);
     await this.persist({ kle_json: this.json, overrides: JSON.stringify(base), layer_overrides: JSON.stringify(extra), selected_saved_layout_name: entry.name }); this.changed();
   }

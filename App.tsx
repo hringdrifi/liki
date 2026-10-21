@@ -34,6 +34,7 @@ function Liki() {
       else return false; return true;
     }); return () => back.remove();
   }, [menu, model]);
+  useEffect(() => { model.pauseRelay(menu || !!dialog); }, [menu, dialog, model]);
   const choose: Choose = (title, items) => new Promise(resolve => setDialog({ title, items, resolve }));
   const prompt: Prompt = (title, text, validate) => new Promise(resolve => setDialog({ title, text, validate, resolve }));
   const confirm = (title: string): Promise<boolean> => new Promise(resolve => Alert.alert(title, undefined,
@@ -48,13 +49,14 @@ function Liki() {
     if (!model.saved.some(e => e.name.toLowerCase() === name.toLowerCase()) || await confirm(`「${name}」を上書きしますか？`)) await model.saveLayout(name);
   };
   const chooseLayout = async () => {
-    const entries = model.saved, i = await choose('レイアウトを選択', ['標準トラックパッド', '標準キーボード（TKL）', ...entries.map(e => `保存: ${e.name}`),
-      'KLE JSONファイルを開く', '現在のレイアウトに名前を付けて保存', '保存したレイアウトを削除']);
+    const entries = model.saved, i = await choose('レイアウトを選択', ['標準トラックパッド', '標準キーボード（TKL）', 'キーボード・マウスを中継', ...entries.map(e => `保存: ${e.name}`),
+      'KLE JSONファイルを開く', ...(model.relayMode ? [] : ['現在のレイアウトに名前を付けて保存']), '保存したレイアウトを削除']);
     if (i === null) return;
     if (i < 2) await model.applyLayout(await model.call('asset', { name: i === 0 ? 'ghosted-trackpad.json' : 'default-kle.json' }));
-    else if (i < entries.length + 2) await model.restoreLayout(entries[i - 2]);
-    else if (i === entries.length + 2) { const value = await model.call('pickFile'); if (value !== null) await model.applyLayout(value); }
-    else if (i === entries.length + 3) await saveLayout();
+    else if (i === 2) await model.setRelayMode(true);
+    else if (i < entries.length + 3) await model.restoreLayout(entries[i - 3]);
+    else if (i === entries.length + 3) { const value = await model.call('pickFile'); if (value !== null) await model.applyLayout(value); }
+    else if (!model.relayMode && i === entries.length + 4) await saveLayout();
     else {
       if (!entries.length) { Alert.alert('Liki', '保存したレイアウトはありません'); return; }
       const at = await choose('保存したレイアウトを削除', entries.map(e => e.name));
@@ -99,7 +101,14 @@ function Liki() {
     });
     const at = await choose(names[i], options.map(b => b.name)); if (at !== null) await model.assign(key, options[at].name);
   };
-  const controls = <View style={{ flex: 1 }}>
+  const controls = model.relayMode ? <ScrollView contentContainerStyle={{ padding: 24, gap: 16 }}>
+    <Text style={[styles.text, { fontSize: 24, fontWeight: 'bold' }]}>キーボード・マウスを中継</Text>
+    <Text style={styles.text}>PC: {model.status.message}</Text>
+    <Section title="接続された入力デバイス" />
+    {model.status.keyboards?.length ? model.status.keyboards.map((device: { id: string | number; name: string }) =>
+      <Text style={styles.text} key={device.id}>● {device.name}</Text>) :
+      <Text style={styles.text}>スマホにキーボードやマウスを接続してください。</Text>}
+  </ScrollView> : <View style={{ flex: 1 }}>
     <View style={{ flex: 1, padding: 8 }}>
       {model.editing && <><View style={{ flexDirection: 'row' }}>{[0, 1, 2, 3].map(i => <View style={{ flex: 1, opacity: i === model.editLayer ? 1 : .55 }} key={i}>
         <Button title={`レイヤー ${i}`} onPress={() => { model.editLayer = i; model.changed(); }} /></View>)}</View>
@@ -110,19 +119,13 @@ function Liki() {
     {!model.editing && <View pointerEvents="none" style={{ position: 'absolute', top: 12, left: 12, backgroundColor: colors.surface, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
       <Text accessibilityLabel={`現在のレイヤー ${model.layer}`} style={[styles.text, { fontSize: 12, fontWeight: 'bold' }]}>L{model.layer}{model.oneShotReturn !== undefined ? '・1回' : ''}</Text></View>}
   </View>;
-  const connecting = model.status.connecting, cancelling = model.status.cancelling;
   const connection = <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 24 }}>
     <Text style={[styles.text, { fontSize: 36, fontWeight: 'bold' }]}>Liki</Text><Text style={[styles.buttonText, { fontWeight: 'bold' }]}>Pocket HID</Text>
     <Text style={styles.text}>スマホをPCのキーボード・トラックパッドに</Text>
     <Text style={[styles.text, { color: model.connected ? colors.accent : colors.muted, paddingVertical: 26, fontWeight: 'bold' }]}>{model.connected ? '●' : '○'} {model.status.message ?? ''}</Text>
     <Section title="1. PCとペアリング" /><Text style={styles.text}>下のボタンを押した後、PCのBluetooth設定からこのスマホを追加します。</Text>
-    <Button title={Platform.OS === 'ios' ? 'BLEペアリング待機' : 'ペアリング待機（5分間公開）'} onPress={() => run(() => model.call('discoverable'))} />
-    {Platform.OS === 'ios' ? <Text style={[styles.muted, { paddingVertical: 12 }]}>PC側から「Liki」に接続してください。iOSではPCの一覧取得やアプリ側からの接続はできません。</Text> : <><Section title="2. 接続先を選択" /><View style={{ flexDirection: 'row', gap: 8 }}>
-      <View style={{ flex: 1 }}><Button disabled={!!connecting || !!cancelling} title={model.devices.find(d => d.address === model.selectedAddress)?.name ?? 'ペアリング済みのPCがありません'} onPress={() => run(async () => {
-        const at = await choose('接続先を選択', model.devices.map(d => d.name)); if (at !== null) { model.selectedAddress = model.devices[at].address; model.changed(); }
-      })} /></View><Button title="更新" onPress={() => run(() => model.refresh())} /></View>
-    <Button disabled={!!cancelling} title={cancelling ? 'キャンセル中…' : connecting ? '接続をキャンセル' : '選択したPCに接続'}
-      onPress={() => run(() => model.call(connecting ? 'cancelConnection' : 'connect', { address: model.selectedAddress ?? '' }))} /></>}
+    <Button title="BLEペアリング待機" onPress={() => run(() => model.call('discoverable'))} />
+    <Text style={[styles.muted, { paddingVertical: 12 }]}>{Platform.OS === 'ios' ? 'PC側から「Liki」に接続してください。iOSではPCの一覧取得やアプリ側からの接続はできません。' : 'PCのBluetooth設定から、このスマホのBluetooth名を選んで接続してください。BLE HID送信は実験中です。'}</Text>
     <Text style={[styles.muted, { paddingVertical: 12 }]}>接続すると操作画面へ切り替わります。PCから自動接続される場合もあります。</Text><Button title="プライバシーポリシー" onPress={privacy} />
   </ScrollView>;
   return <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -141,9 +144,10 @@ function Liki() {
       <Pressable accessibilityLabel="メニューを閉じる" style={{ flex: 1, backgroundColor: '#00000096' }} onPress={() => setMenu(false)} />
       <SafeAreaView edges={['top', 'right', 'bottom']} style={{ width: '80%', maxWidth: 300, backgroundColor: colors.surface }}>
       <ScrollView contentContainerStyle={{ padding: 12 }}>
-        <Text style={[styles.text, { fontSize: 24, fontWeight: 'bold', padding: 12 }]}>Liki</Text>{model.selectedName && <Text style={styles.text}>保存: {model.selectedName}</Text>}
-        <Button title="レイアウトを選択" onPress={() => action(chooseLayout)} /><Button title="キー割り当てを編集" onPress={() => { setMenu(false); model.beginEdit(); }} />
-        <Button title="表示をリセット" onPress={() => action(() => model.resetView())} /><Button title="設定" onPress={() => { setMenu(false); model.settingsVisible = true; model.syncPage(); model.changed(); }} />
+        <Text style={[styles.text, { fontSize: 24, fontWeight: 'bold', padding: 12 }]}>Liki</Text>{!model.relayMode && model.selectedName && <Text style={styles.text}>保存: {model.selectedName}</Text>}
+        <Button title="レイアウトを選択" onPress={() => action(chooseLayout)} />{!model.relayMode && <Button title="キー割り当てを編集" onPress={() => { setMenu(false); model.beginEdit(); }} />}
+        {model.relayMode && <Button title="通常のレイアウトに戻る" onPress={() => action(() => model.setRelayMode(false))} />}
+        {!model.relayMode && <Button title="表示をリセット" onPress={() => action(() => model.resetView())} />}<Button title="設定" onPress={() => { setMenu(false); model.settingsVisible = true; model.syncPage(); model.changed(); }} />
         <Button title="切断" onPress={() => action(() => model.call('disconnect'))} /></ScrollView></SafeAreaView></View>}
     <Modal visible={!!dialog} transparent animationType="fade" onRequestClose={closeDialog}>
       <View style={{ flex: 1, justifyContent: 'center', backgroundColor: '#00000099', padding: 24 }}><View style={{ backgroundColor: colors.surface, maxHeight: '85%', borderRadius: 12, padding: 16 }}>

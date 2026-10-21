@@ -9,3 +9,5 @@ android {
     namespace 'jp.liki.hid'
     defaultConfig { minSdk 28 }
 }
+
+dependencies { testImplementation 'junit:junit:4.13.2' }

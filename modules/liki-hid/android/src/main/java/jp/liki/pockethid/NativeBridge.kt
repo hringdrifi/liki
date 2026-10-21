@@ -19,8 +19,8 @@ import jp.liki.hid.R
 
 internal class NativeBridge(
     private val context: Context,
-    private val activityProvider: () -> Activity?,
-    private val emit: (Map<String, Any?>) -> Unit
+    private var activityProvider: () -> Activity?,
+    private var emit: (Map<String, Any?>) -> Unit
 ) {
     private val settings = AppSettings(context)
     private val layouts = LayoutRepository(context)
@@ -30,35 +30,36 @@ internal class NativeBridge(
         context.deleteSharedPreferences("layout")
     }
     private var message = "準備中…"
-    private var visible = true
     private var controls = false
     private var settingsPage = false
-    private var reconnectAddress: String? = LikiSession.reconnectAddress
-    private var reconnectAttempted = false
+    private var relayRequested = false
     private var pendingPicker: Promise? = null
     private var observedView: View? = null
     private val layoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateGestureExclusion() }
     private val hid = HidController(context, settings) { status, connected ->
         context.mainExecutor.execute { onStatus(status, connected) }
     }
+    private val relay = ExternalKeyboardRelay(context, { hid.isConnected() }, hid::keyboardReport, hid::consumerReport,
+        hid::relayMouse, { activityProvider()?.window?.decorView }, ::publish)
 
     private fun onStatus(status: String, connected: Boolean) {
+        if (!connected) relay.release()
+        relay.updateCapture()
         if (connected != hid.isConnected()) return
         message = status
         LikiSession.connectedAddress = hid.connectedAddress()
         if (connected) {
             hid.connectedAddress()?.let { RecentDevice.remember(preferences, it) }
-            reconnectAddress = null; reconnectAttempted = false
             LikiSession.reconnectAddress = null
         }
-        maybeReconnect(); publish()
+        publish()
     }
 
     fun invoke(method: String, args: Map<String, Any?>): Any? {
         fun int(key: String) = (args[key] as? Number)?.toInt() ?: 0
         fun string(key: String) = requireNotNull(args[key] as? String)
         return when (method) {
-            "initialize" -> { applyWindowSettings(); mapOf("layout" to layouts.initial(), "preferences" to preferences.all,
+            "initialize" -> { hid.releaseInputs(); relay.enable(false); relayRequested = false; relay.start(); applyWindowSettings(); mapOf("layout" to layouts.initial(), "preferences" to preferences.all,
                 "settings" to settingsValues(), "bindings" to KeyBinding.options().map(::bindingMap),
                 "density" to context.resources.displayMetrics.density.toDouble(),
                 "xdpi" to context.resources.displayMetrics.xdpi.toDouble(),
@@ -67,9 +68,8 @@ internal class NativeBridge(
             "status" -> status()
             "ready" -> { ensureReady(); null }
             "discoverable" -> { discoverable(); null }
-            "connect" -> { hid.connect(hid.pairedDevices().firstOrNull { it.address == string("address") }); null }
-            "cancelConnection" -> { hid.cancelConnection(); null }
-            "disconnect" -> { reconnectAddress = null; LikiSession.reconnectAddress = null; reconnectAttempted = true; hid.disconnect(); null }
+            "connect", "cancelConnection" -> error("BLE HIDはPC側のBluetooth設定から接続してください")
+            "disconnect" -> { LikiSession.reconnectAddress = null; hid.disconnect(); null }
             "key" -> { hid.key(int("modifiers"), int("code")); null }
             "consumer" -> { hid.consumer(int("usage")); null }
             "move" -> { hid.mouseMove(int("x"), int("y")); null }
@@ -102,6 +102,9 @@ internal class NativeBridge(
             "setting" -> { saveSetting(string("key"), args["value"]); applyWindowSettings(); settingsValues() }
             "page" -> {
                 controls = args["controls"] == true; settingsPage = args["settings"] == true
+                val requested = args["relay"] == true && controls && !settingsPage
+                if (relayRequested != requested) { hid.releaseInputs(); relayRequested = requested }
+                relay.enable(requested)
                 applyWindowSettings(); null
             }
             else -> error("Unknown HID command: $method")
@@ -123,38 +126,40 @@ internal class NativeBridge(
         else { hid.start(); publish() }
     }
     private fun discoverable() {
-        check(hid.isRegistered()) { "HIDの準備が完了してから再試行してください" }
         check(Build.VERSION.SDK_INT < 31 || context.checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED) { "Bluetooth公開権限が必要です" }
-        requireNotNull(activityProvider()).startActivityForResult(Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
-            putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
-        }, 5534)
-    }
-    private fun maybeReconnect() {
-        val address = reconnectAddress ?: return
-        if (!visible || reconnectAttempted || !hid.isRegistered() || hid.isConnected() || hid.isConnecting() || hid.isCancelling()) return
-        reconnectAttempted = true
-        hid.pairedDevices().firstOrNull { it.address == address }?.let(hid::connect)
+        hid.advertise()
     }
     fun resume() {
-        visible = true
-        if (hid.isBluetoothReady()) { hid.start(); maybeReconnect(); publish() }
+        relay.start(); relay.foreground(true)
+        if (hid.isBluetoothReady()) { hid.start(); publish() }
         applyWindowSettings()
     }
     fun pause() {
-        reconnectAddress = hid.connectedAddress() ?: reconnectAddress
-        LikiSession.reconnectAddress = reconnectAddress
-        visible = false; reconnectAttempted = false
+        relay.foreground(false)
+        hid.releaseInputs()
     }
-    fun close() {
+    fun attach(activity: () -> Activity?, events: (Map<String, Any?>) -> Unit) {
+        activityProvider = activity; emit = events
+        relay.start()
+        val focused = activity()?.hasWindowFocus() == true
+        relay.foreground(focused); relay.focus(focused)
+    }
+    fun detach() {
+        pause()
         observedView?.removeOnLayoutChangeListener(layoutListener); observedView = null
         pendingPicker?.reject("liki", "画面が閉じられました", null); pendingPicker = null
+        relay.close(); relayRequested = false
+        controls = false; settingsPage = false
+        activityProvider = { null }; emit = {}
+    }
+    fun close() {
+        detach()
         hid.close()
         LikiSession.connectedAddress = null
     }
     fun activityResult(code: Int, resultCode: Int, data: Intent?) {
         when (code) {
             5532 -> if (resultCode == Activity.RESULT_OK) ensureReady() else message = "Bluetoothをオンにしてください"
-            5534 -> if (resultCode > 0) message = "公開中です。PCからペアリングしてください"
             5535 -> {
                 val result = pendingPicker; pendingPicker = null
                 try {
@@ -194,10 +199,11 @@ internal class NativeBridge(
         "modifier" to b.modifier, "layer" to b.layer, "action" to b.layerAction.name, "consumer" to b.consumerUsage)
 
     private fun status(): Map<String, Any?> = mapOf("message" to message,
-        "connected" to hid.isConnected(), "connecting" to hid.isConnecting(), "cancelling" to hid.isCancelling(),
-        "restoring" to (reconnectAddress != null && !hid.isConnected() && (!visible || !reconnectAttempted || hid.isConnecting())),
+        "connected" to hid.isConnected(), "connecting" to false, "cancelling" to false,
+        "restoring" to false, "transport" to "ble",
+        "relaySupported" to true, "keyboards" to relay.devices(),
         "registered" to hid.isRegistered(), "address" to hid.connectedAddress(),
-        "devices" to hid.pairedDevices().map { mapOf("address" to it.address, "name" to (it.name?.takeIf(String::isNotEmpty) ?: it.address)) },
+        "devices" to emptyList<Any>(),
         "lastAddress" to preferences.getString("last_device_address", null))
     private fun publish() { emit(status()) }
     private fun vibrate() { if (settings.touchVibration()) activityProvider()?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) }

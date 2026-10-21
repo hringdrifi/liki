@@ -13,5 +13,5 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore'
   s.source_files = 'ios/*.swift'
   s.resource_bundles = { 'LikiHid' => ['android/src/main/assets/*.json'] }
-  s.frameworks = 'CoreBluetooth', 'Combine', 'UIKit'
+  s.frameworks = 'CoreBluetooth', 'Combine', 'UIKit', 'GameController'
 end
