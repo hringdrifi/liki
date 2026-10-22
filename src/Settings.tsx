@@ -1,12 +1,12 @@
 import React from 'react';
 import { View, Text, Switch, ScrollView, Pressable, StyleSheet } from 'react-native';
 import Slider from '@react-native-community/slider';
-import { LikiModel } from './model';
+import { LikiModel, KEY_PITCH_MIN_MM, KEY_PITCH_MAX_MM, TRACKPAD_PANEL_MIN_PERCENT, TRACKPAD_PANEL_MAX_PERCENT } from './model';
 import { colors, hex } from './Keyboard';
 export type Choose = (title: string, items: string[]) => Promise<number | null>;
 export type Prompt = (title: string, initial: string, validate: (s: string) => boolean) => Promise<string | null>;
-export function Button({ title, onPress, disabled = false }: { title: string; onPress(): void; disabled?: boolean }) {
-  return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button, disabled && { opacity: .45 }]}><Text style={styles.buttonText}>{title}</Text></Pressable>;
+export function Button({ title, onPress, disabled = false, align = 'center' }: { title: string; onPress(): void; disabled?: boolean; align?: 'left' | 'center' }) {
+  return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button, align === 'left' && { alignItems: 'flex-start', paddingHorizontal: 12 }, disabled && { opacity: .45 }]}><Text style={styles.buttonText}>{title}</Text></Pressable>;
 }
 export const Section = ({ title }: { title: string }) => <Text style={styles.section}>{title}</Text>;
 export const styles = StyleSheet.create({
@@ -22,9 +22,9 @@ export function Settings({ model: m, onBack, onPrivacy, choose, prompt, run }: {
     <View style={{ flexDirection: 'row', alignItems: 'center' }}><Text style={[styles.text, { flex: 1, fontSize: 16 }]}>{title}</Text>
       <Switch accessibilityLabel={title} value={m.flag(key)} onValueChange={v => run(() => m.setSetting(key, v))} trackColor={{ true: colors.accent }} /></View>
     <Text style={styles.muted}>{detail}</Text></View>;
-  const slider = (key: string, title: string, min: number, max: number, suffix: string, fallback = min) => {
-    const value = Math.max(min, Math.min(max, m.num(key) > 0 ? m.num(key) : fallback));
-    return <View key={key} style={{ paddingVertical: 8 }}><Text style={styles.text}>{title}: {value.toFixed(1)}{suffix}</Text>
+  const slider = (key: string, title: string, min: number, max: number, suffix: string, current = m.num(key) > 0 ? m.num(key) : min) => {
+    const value = Math.max(min, Math.min(max, current));
+    return <View key={key} style={{ paddingVertical: 8 }}><Text style={styles.text}>{title}: {(key === 'key_pitch_mm' ? current : value).toFixed(1)}{suffix}</Text>
       <Slider accessibilityLabel={title} minimumValue={min} maximumValue={max} step={.1} value={value}
         minimumTrackTintColor={colors.accent} onValueChange={v => run(() => m.setSetting(key, v))} /></View>;
   };
@@ -55,13 +55,25 @@ export function Settings({ model: m, onBack, onPrivacy, choose, prompt, run }: {
     {[0, 1, 2, 3].map(layer => <View key={layer} style={{ flexDirection: 'row', alignItems: 'center' }}>
       <View style={{ backgroundColor: hex(m.settings.border_colors[layer]), width: 18, height: 18, borderRadius: 9, marginRight: 10 }} />
       <View style={{ flex: 1 }}><Button title={`レイヤー ${layer} の枠色  ${hex(m.settings.border_colors[layer]).toUpperCase()}`} onPress={() => run(() => border(layer))} /></View></View>)}
-    {slider('key_pitch_mm', 'キーピッチ（概算）', 3, 24, ' mm', pitch)}
+    {slider('key_pitch_mm', 'キーピッチ（概算）', KEY_PITCH_MIN_MM, KEY_PITCH_MAX_MM, ' mm', pitch)}
     <Text style={styles.muted}>端末の画面密度から換算した概算値です。画面に収めるにはメニューの「表示をリセット」を押します。</Text>
     {toggle('kle_json_key_labels', 'KLE JSONファイルに従った表示', 'オン: KLEの文字を表示し、空欄ならキー割り当て名を表示。オフ: 有効なキー割り当て名を表示')}
     {toggle('sticky_modifiers', '修飾キーを保持', 'Ctrl・Shiftなどを次のキー入力まで保持')}
     {toggle('pinch_zoom', 'ピンチで拡大縮小', '2本指でキーボードの表示倍率を変更')}
     {toggle('drag_move_keyboard', 'ドラッグでキーボードを移動', '通常キーの上を1本指で動かして表示位置を変更')}
-    <Section title="トラックパッド" />{slider('pointer_speed', 'ポインターの速度', .5, 3, '倍')}
+    <Section title="トラックパッド" />
+    <View style={{ paddingVertical: 8, flexDirection: 'row', alignItems: 'center' }}><Text style={[styles.text, { flex: 1, fontSize: 16 }]}>独立したトラックパッド領域</Text>
+      <Switch accessibilityLabel="独立したトラックパッド領域" value={m.trackpadPanelEnabled}
+        onValueChange={value => run(() => m.setTrackpadPanelEnabled(value))} trackColor={{ true: colors.accent }} /></View>
+    <Button title={`トラックパッドの位置: ${{ bottom: '下', top: '上', left: '左', right: '右' }[m.trackpadPanelPosition]}`} onPress={() => run(async () => {
+      const positions = ['bottom', 'top', 'left', 'right'] as const;
+      const index = await choose('トラックパッドの位置', ['下', '上', '左', '右']);
+      if (index !== null) await m.setTrackpadPanelPosition(positions[index]);
+    })} />
+    <View style={{ paddingVertical: 8 }}><Text style={styles.text}>トラックパッド領域の大きさ: {m.trackpadPanelSize}%</Text>
+      <Slider accessibilityLabel="トラックパッド領域の大きさ" minimumValue={TRACKPAD_PANEL_MIN_PERCENT} maximumValue={TRACKPAD_PANEL_MAX_PERCENT}
+        step={1} value={m.trackpadPanelSize} minimumTrackTintColor={colors.accent} onValueChange={value => run(() => m.setTrackpadPanelSize(value))} /></View>
+    {slider('pointer_speed', 'ポインターの速度', .5, 3, '倍')}
     {choice('pointer_send_mode', 'カーソルの送信間隔', ['即時（毎回送信）', '16ms（送信多め）', '32ms（標準）'])}
     <Text style={styles.muted}>同じ速さのまま、カーソル移動の送信頻度を変えられます。</Text>
     {toggle('tap_to_click', 'タップでクリック', '1本指でタップして左クリック')}

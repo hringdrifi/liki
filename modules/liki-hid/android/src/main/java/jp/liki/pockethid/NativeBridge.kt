@@ -16,6 +16,7 @@ import android.view.WindowInsetsController
 import android.view.WindowManager
 import expo.modules.kotlin.Promise
 import jp.liki.hid.R
+import org.json.JSONArray
 
 internal class NativeBridge(
     private val context: Context,
@@ -33,16 +34,34 @@ internal class NativeBridge(
     private var controls = false
     private var settingsPage = false
     private var relayRequested = false
+    private var remapRequested = true
+    private var studioConnected = false
     private var pendingPicker: Promise? = null
     private var observedView: View? = null
     private val layoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateGestureExclusion() }
-    private val hid = HidController(context, settings) { status, connected ->
+    private val hid = HidController(context, settings, preferences.getString("hid_transport", "ble") ?: "ble") { status, connected ->
         context.mainExecutor.execute { onStatus(status, connected) }
     }
-    private val relay = ExternalKeyboardRelay(context, { hid.isConnected() }, hid::keyboardReport, hid::consumerReport,
+    private val relay: ExternalKeyboardRelay = ExternalKeyboardRelay(context, { hid.isConnected() }, hid::keyboardReport, hid::consumerReport,
         hid::relayMouse, { activityProvider()?.window?.decorView }, { publish(); if (relayRequested) studio.retry() },
         { pressed, consumer -> emit(mapOf("relayInput" to mapOf("pressed" to pressed, "consumer" to consumer))) })
-    private val studio = StudioTransport(context) { emit(it) }
+    private val studio: StudioTransport = StudioTransport(context) { event ->
+        val state = event["studioState"] as? Map<*, *>
+        if (state != null) { studioConnected = state["ready"] == true; relay.configureRemaps(apply = remapRequested && !studioConnected) }
+        emit(event)
+    }
+    private fun parseRemaps(json: String): Map<Int, List<Int>> {
+        val values = JSONArray(json); require(values.length() <= 256)
+        val result = linkedMapOf<Int, List<Int>>()
+        fun valid(usage: Int) = (usage ushr 16 == 7 && ((usage and 0xffff) in 4..0xdd || (usage and 0xffff) in 0xe0..0xe7)) ||
+            (usage ushr 16 == 12 && (usage and 0xffff) in 1..0xffff)
+        for (index in 0 until values.length()) {
+            val rule = values.getJSONObject(index); val source = rule.getInt("source"); val targets = rule.getJSONArray("target")
+            require(valid(source) && source !in result && targets.length() <= 16)
+            result[source] = (0 until targets.length()).map { targets.getInt(it).also { usage -> require(valid(usage)) } }
+        }
+        return result
+    }
 
     private fun onStatus(status: String, connected: Boolean) {
         if (!connected) relay.release()
@@ -61,18 +80,30 @@ internal class NativeBridge(
         fun int(key: String) = (args[key] as? Number)?.toInt() ?: 0
         fun string(key: String) = requireNotNull(args[key] as? String)
         return when (method) {
-            "initialize" -> { hid.releaseInputs(); relay.enable(false); relayRequested = false; relay.start(); applyWindowSettings(); mapOf("layout" to layouts.initial(), "preferences" to preferences.all,
+            "initialize" -> { hid.releaseInputs(); relay.enable(false); relayRequested = false; relay.configureRemaps(parseRemaps(preferences.getString("relay_remaps", "[]") ?: "[]")); relay.start(); applyWindowSettings(); mapOf("layout" to layouts.initial(), "preferences" to preferences.all,
                 "settings" to settingsValues(), "bindings" to KeyBinding.options().map(::bindingMap),
                 "density" to context.resources.displayMetrics.density.toDouble(),
                 "xdpi" to context.resources.displayMetrics.xdpi.toDouble(),
                 "privacy" to context.getString(R.string.privacy_policy_text), "status" to status(), "session" to LikiSession.value) }
             "session" -> { LikiSession.value = string("value"); null }
             "status" -> status()
+            "transport" -> {
+                val value = string("value")
+                hid.selectTransport(value)
+                preferences.edit().putString("hid_transport", value).apply()
+                if (value == "classic") { relay.enable(false); studio.enable(false); relayRequested = false }
+                publish(); status()
+            }
             "studioRetry" -> { studio.retry(); null }
             "studioWrite" -> { studio.write((args["bytes"] as? List<*>)?.map { (it as Number).toInt() } ?: emptyList()); null }
+            "relayRemaps" -> {
+                val json = string("value"); val rules = parseRemaps(json)
+                relay.configureRemaps(rules); preferences.edit().putString("relay_remaps", json).apply(); null
+            }
             "ready" -> { ensureReady(); null }
             "discoverable" -> { discoverable(); null }
-            "connect", "cancelConnection" -> error("BLE HIDはPC側のBluetooth設定から接続してください")
+            "connect" -> { check(hid.transport == "classic") { "BLEではPC側から接続してください" }; hid.connect(string("address")); publish(); null }
+            "cancelConnection" -> { hid.cancelConnection(); publish(); null }
             "disconnect" -> { LikiSession.reconnectAddress = null; hid.disconnect(); null }
             "key" -> { hid.key(int("modifiers"), int("code")); null }
             "consumer" -> { hid.consumer(int("usage")); null }
@@ -106,10 +137,12 @@ internal class NativeBridge(
             "setting" -> { saveSetting(string("key"), args["value"]); applyWindowSettings(); settingsValues() }
             "page" -> {
                 controls = args["controls"] == true; settingsPage = args["settings"] == true
-                val requested = args["relay"] == true && controls && !settingsPage
+                val requested = hid.transport == "ble" && args["relay"] == true && controls && !settingsPage
                 if (relayRequested != requested) { hid.releaseInputs(); relayRequested = requested }
                 relay.enable(requested)
-                studio.enable(requested)
+                remapRequested = args["remap"] != false
+                relay.configureRemaps(learn = args["relayLearning"] == true, apply = remapRequested && !studioConnected)
+                studio.enable(hid.transport == "ble" && (args["studio"] as? Boolean ?: requested))
                 applyWindowSettings(); null
             }
             else -> error("Unknown HID command: $method")
@@ -132,7 +165,12 @@ internal class NativeBridge(
     }
     private fun discoverable() {
         check(Build.VERSION.SDK_INT < 31 || context.checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED) { "Bluetooth公開権限が必要です" }
-        hid.advertise()
+        if (hid.transport == "classic") {
+            check(hid.isRegistered()) { "Classic HIDの準備が完了してから再試行してください" }
+            requireNotNull(activityProvider()).startActivityForResult(Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
+                putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
+            }, 5534)
+        } else hid.advertise()
     }
     fun resume() {
         relay.start(); relay.foreground(true)
@@ -206,11 +244,11 @@ internal class NativeBridge(
         "modifier" to b.modifier, "layer" to b.layer, "action" to b.layerAction.name, "consumer" to b.consumerUsage)
 
     private fun status(): Map<String, Any?> = mapOf("message" to message,
-        "connected" to hid.isConnected(), "connecting" to false, "cancelling" to false,
-        "restoring" to false, "transport" to "ble",
-        "relaySupported" to true, "keyboards" to relay.devices(),
+        "connected" to hid.isConnected(), "connecting" to hid.isConnecting(), "cancelling" to hid.isCancelling(),
+        "restoring" to false, "transport" to hid.transport, "transports" to listOf("ble", "classic"),
+        "relaySupported" to (hid.transport == "ble"), "remapSupported" to true, "keyboards" to if (hid.transport == "ble") relay.devices() else emptyList<Any>(),
         "registered" to hid.isRegistered(), "address" to hid.connectedAddress(),
-        "devices" to emptyList<Any>(),
+        "devices" to hid.pairedDevices().map { mapOf("address" to it.address, "name" to (it.name ?: it.address)) },
         "lastAddress" to preferences.getString("last_device_address", null))
     private fun publish() { emit(status()) }
     private fun vibrate() { if (settings.touchVibration()) activityProvider()?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) }

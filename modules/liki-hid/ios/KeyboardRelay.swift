@@ -50,7 +50,7 @@ final class KeyboardRelay {
                 if down { self.pressed.insert(usage) } else { self.pressed.remove(usage) }
                 let modifiers = self.pressed.filter { (0xe0...0xe7).contains($0) }.reduce(0) { $0 | (1 << ($1 - 0xe0)) }
                 let keys = self.pressed.filter { $0 < 0xe0 }.sorted()
-                self.send(modifiers, keys.count > 6 ? Array(repeating: 1, count: 6) : keys)
+                self.send(modifiers, keys)
             }
         }
     }

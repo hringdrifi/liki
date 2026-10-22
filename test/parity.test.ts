@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { LikiModel, Geometry, rotate } from '../src/model.ts';
 import type { Backend, Binding, Data, KeyShape, Point } from '../src/model.ts';
-import { KeyboardGesture } from '../src/gestures.ts';
+import { KeyboardGesture, TrackpadGesture } from '../src/gestures.ts';
 
 const binding = (name: string, code = 0, modifier = 0, action = 'NONE', layer = 0, consumer = 0): Binding => ({ name, code, modifier, action, layer, consumer });
 const shape = (index: number, ghost = false): KeyShape => ({ index, x: index, y: 0, w: 1, h: 1, x2: 0, y2: 0, w2: 1, h2: 1,
@@ -86,8 +86,8 @@ test('invalid import leaves active state untouched', async () => {
 test('rotated secondary key hit and zoom focus match drawn geometry', async () => {
   const key = { ...shape(0), rotation: 90, x2: -1, w2: 2 }, g = new Geometry([key]); g.width = 500; g.height = 300; g.base = 40;
   const world = rotate(key, { x: -.5, y: .5 }), hit = g.hit({ x: g.origin.x + world.x * g.scale, y: g.origin.y + world.y * g.scale }); assert.equal(hit?.index, 0);
-  const focus = { x: 123, y: 87 }, before = g.world(focus); g.zoomAt(2, focus, false); assert.ok(Math.hypot(g.world(focus).x - before.x, g.world(focus).y - before.y) < 1e-8);
-  g.zoomAt(.01, focus, false); assert.equal(g.zoom, 1);
+  const focus = { x: 123, y: 87 }, before = g.world(focus); g.zoomAt(2, focus, 1, 5); assert.ok(Math.hypot(g.world(focus).x - before.x, g.world(focus).y - before.y) < 1e-8);
+  g.zoomAt(.01, focus, 1, 5); assert.equal(g.zoom, 1);
 });
 test('viewport fitting preserves physical size on rotation and reset fits the new viewport', async () => {
   const { m } = await fixture(); m.density = 2; m.xdpi = 320;
@@ -95,9 +95,28 @@ test('viewport fitting preserves physical size on rotation and reset fits the ne
   assert.ok(Math.abs(base - 340 / 3) < 1e-8);
   m.setViewport(m.geometry!, 640, 360); assert.equal(m.geometry!.base, base);
   await m.setSetting('key_pitch_mm', 10); assert.ok(Math.abs(m.geometry!.base - 10 * 320 / 25.4 / 2) < 1e-8);
+  m.zoomKeyboard(2, { x: 100, y: 100 });
+  await m.setSetting('pointer_speed', 2); assert.equal(m.geometry!.zoom, 2);
+  await m.setSetting('key_pitch_mm', 12);
+  assert.ok(Math.abs(m.geometry!.scale * m.density * 25.4 / m.xdpi - 12) < 1e-8);
   await m.resetView(); assert.ok(Math.abs(m.geometry!.base - 620 / 3) < 1e-8);
 });
 const pointer = (g: KeyboardGesture, kind: 'down' | 'move' | 'up' | 'cancel', id: number, p: Point, time: number) => g.touch({ kind, id, position: p, time });
+
+test('pinch uses the same 3–24 mm pitch limits for automatic and manual sizing', async () => {
+  for (const manual of [false, true]) {
+    const { m } = await fixture(); m.density = 2; m.xdpi = 320;
+    m.setViewport(m.geometry!, 360, 640);
+    if (manual) await m.setSetting('key_pitch_mm', 10);
+    const g = m.geometry!, focus = { x: 120, y: 90 }, before = g.world(focus);
+    m.zoomKeyboard(1000, focus);
+    assert.ok(Math.abs(g.scale * m.density * 25.4 / m.xdpi - 24) < 1e-8);
+    assert.ok(Math.hypot(g.world(focus).x - before.x, g.world(focus).y - before.y) < 1e-8);
+    m.zoomKeyboard(.000001, focus);
+    assert.ok(Math.abs(g.scale * m.density * 25.4 / m.xdpi - 3) < 1e-8);
+    assert.ok(Math.hypot(g.world(focus).x - before.x, g.world(focus).y - before.y) < 1e-8);
+  }
+});
 
 test('relay mode preserves the previous layout and pauses capture for menus and settings', async () => {
   const { m, sent, preferences } = await fixture(); m.status.relaySupported = true; m.showingControls = true;
@@ -180,4 +199,103 @@ test('two finger scroll and pinch produce distinct native actions', async () => 
   pointer(g, 'down', 1, { x: 210, y: 50 }, 2000); pointer(g, 'down', 2, { x: 250, y: 50 }, 2000);
   g.points.set(2, { x: 290, y: 50 }); pointer(g, 'move', 1, { x: 170, y: 50 }, 2100);
   assert.deepEqual(sent('zoom'), [{ amount: 3 }]); assert.equal(sent('scroll').length, 0); g.cancel();
+});
+
+test('independent trackpad preferences persist across input modes without replacing the layout', async () => {
+  const { m, preferences } = await fixture();
+  const json = m.json;
+  assert.equal(m.trackpadPanelEnabled, false); assert.equal(m.trackpadPanelPosition, 'bottom');
+  assert.equal(m.trackpadPanelSize, 33);
+  await m.setTrackpadPanelSize(45); assert.equal(preferences.trackpad_panel_size, '45');
+  await m.setTrackpadPanelEnabled(true);
+  for (const position of ['top', 'bottom', 'left', 'right'] as const) {
+    await m.setTrackpadPanelPosition(position);
+    assert.equal(preferences.trackpad_panel_position, position);
+    assert.equal(m.trackpadPanelPosition, position);
+  }
+  m.status.relaySupported = true;
+  await m.setRelayMode(true); assert.equal(m.trackpadPanelEnabled, true);
+  await m.setRelayMode(false); assert.equal(m.trackpadPanelEnabled, true); assert.equal(m.json, json);
+  assert.equal(m.trackpadPanelSize, 45);
+  await m.setTrackpadPanelEnabled(false);
+  assert.equal(m.trackpadPanelEnabled, false); assert.equal(m.trackpadPanelPosition, 'right');
+  const restored = new LikiModel(m.native); restored.preferences = { ...preferences };
+  assert.equal(restored.trackpadPanelSize, 45);
+});
+
+test('Classic selection leaves relay mode and selects the last paired PC', async () => {
+  const { m, preferences } = await fixture(); m.status.relaySupported = true;
+  await m.setRelayMode(true);
+  const json = m.json, invoke = m.native.invoke.bind(m.native);
+  m.native.invoke = async (method, args = {}) => method === 'transport' ? {
+    transport: args.value, connected: false, relaySupported: args.value === 'ble',
+    devices: args.value === 'classic' ? [{ address: 'pc-a', name: 'PC A' }, { address: 'pc-b', name: 'PC B' }] : [], lastAddress: 'pc-b',
+  } : invoke(method, args);
+  await m.selectTransport('classic');
+  assert.equal(m.transport, 'classic'); assert.equal(m.relayMode, false);
+  assert.equal(preferences.input_mode, null); assert.equal(m.selectedAddress, 'pc-b'); assert.equal(m.json, json);
+  await assert.rejects(m.setRelayMode(true));
+  await m.selectTransport('ble'); assert.equal(m.transport, 'ble'); assert.equal(m.relayMode, false);
+  await m.setRelayMode(true); assert.equal(m.relayMode, true);
+});
+
+test('restored Classic status prevents external input mode on startup', async () => {
+  const { m } = await fixture(); m.relayMode = true; m.relayPressed = [4];
+  m.acceptStatus({ transport: 'classic', relaySupported: false, connected: false, devices: [] });
+  assert.equal(m.relayMode, false); assert.deepEqual(m.relayPressed, []);
+});
+
+test('independent trackpad sends movement and clicks without keyboard geometry in either input mode', async () => {
+  for (const relay of [false, true]) {
+    const { m, sent } = await fixture(); m.geometry = undefined; m.relayMode = relay;
+    const gesture = new TrackpadGesture(m);
+    const touch = (kind: 'down' | 'move' | 'up', id: number, x: number, y: number, time: number) =>
+      gesture.touch({ kind, id, position: { x, y }, time });
+    touch('down', 1, 10, 10, 1000); touch('move', 1, 30, 20, 1100); touch('up', 1, 30, 20, 1200);
+    assert.equal(sent('move').length, 1); assert.equal(sent('key').length, 0);
+    touch('down', 1, 10, 10, 2000); touch('up', 1, 10, 10, 2100);
+    touch('down', 1, 10, 10, 3000); touch('down', 2, 30, 10, 3010);
+    touch('up', 2, 30, 10, 3100); touch('up', 1, 10, 10, 3110);
+    assert.deepEqual(sent('click').map(value => value.button), [1, 2]);
+    assert.equal(gesture.points.size, 0); gesture.cancel();
+  }
+});
+
+test('independent trackpad scrolls and releases a held drag when interrupted', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { m, sent } = await fixture(); const gesture = new TrackpadGesture(m);
+  const touch = (kind: 'down' | 'move', id: number, x: number, y: number, time: number) =>
+    gesture.touch({ kind, id, position: { x, y }, time });
+  touch('down', 1, 10, 80, 1000); touch('down', 2, 50, 80, 1000);
+  gesture.points.set(2, { x: 50, y: 30 }); touch('move', 1, 10, 30, 1100);
+  assert.deepEqual(sent('scroll'), [{ amount: 2 }]); gesture.cancel();
+  touch('down', 1, 10, 10, 2000); t.mock.timers.tick(451);
+  assert.equal(sent('mouseDown').length, 1); gesture.cancel();
+  assert.equal(sent('mouseUp').length, 1); assert.equal(gesture.points.size, 0);
+  t.mock.timers.tick(1000); assert.equal(sent('mouseDown').length, 1);
+});
+
+test('external editing keeps Studio active, pauses forwarding, and learns without forwarding', async () => {
+  const { m, sent } = await fixture();
+  m.status = { connected: true, relaySupported: true, remapSupported: true }; m.showingControls = true; m.relayMode = true;
+  m.beginExternalEdit();
+  assert.equal(m.externalEditZmk, false);
+  assert.deepEqual(sent('page').at(-1), { controls: true, settings: false, relay: false, studio: true, relayLearning: false, remap: true });
+  m.learnRelayKey(true);
+  assert.deepEqual(sent('page').at(-1), { controls: true, settings: false, relay: true, studio: true, relayLearning: true, remap: true });
+  await m.saveRelayRemaps([{ source: 0x70004, target: [0x700e1, 0x70005] }]);
+  assert.deepEqual(m.relayRemaps, [{ source: 0x70004, target: [0x700e1, 0x70005] }]);
+  assert.equal(sent('relayRemaps').length, 1);
+  m.endExternalEdit();
+  assert.deepEqual(sent('page').at(-1), { controls: true, settings: false, relay: true, studio: true, relayLearning: false, remap: true });
+  m.studio.dirty = true; assert.throws(() => m.endExternalEdit(), /未保存/);
+});
+
+test('known ZMK keyboards bypass local mappings across menu pauses, until the input device changes', async () => {
+  const { m, sent } = await fixture();
+  m.status = { connected: true, relaySupported: true, keyboards: [{ id: 1 }] }; m.showingControls = true; m.relayMode = true; m.isZmkKeyboard = true;
+  m.pauseRelay(true); assert.equal(sent('page').at(-1)!.remap, false);
+  m.pauseRelay(false); assert.equal(sent('page').at(-1)!.remap, false);
+  m.acceptStatus({ connected: true, relaySupported: true, keyboards: [{ id: 2 }] });
+  assert.equal(m.isZmkKeyboard, false); assert.equal(sent('page').at(-1)!.remap, true);
 });

@@ -5,8 +5,11 @@ import { Geometry } from './model';
 import type { LikiModel } from './model';
 import { colors } from './Keyboard';
 import { studioKeyActive } from './zmk';
+import { KeyRain } from './KeyRain';
 
-export function StudioKeyboard({ model }: { model: LikiModel }) {
+export function StudioKeyboard({ model, selectedKey, onSelectKey, onSelectLayer }: {
+  model: LikiModel; selectedKey?: number; onSelectKey?(index: number): void; onSelectLayer?(): void;
+}) {
   const client = model.studio, layout = client.layout;
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const geometry = useMemo(() => {
@@ -18,18 +21,12 @@ export function StudioKeyboard({ model }: { model: LikiModel }) {
   }, [layout, viewport]);
   const [, redraw] = useReducer(n => n + 1, 0);
   const layer = layout?.layers[client.layer];
+  if (!layout) return <KeyRain model={model} />;
   return <View style={{ flex: 1, padding: 12, gap: 8 }}>
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-      <Text style={{ color: colors.text, flex: 1, fontWeight: 'bold' }}>ZMK Studio{layout ? ` · ${layout.name}` : ''}</Text>
-      <Pressable accessibilityRole="button" onPress={() => model.send('studioRetry')} style={{ padding: 10, backgroundColor: colors.surface, borderRadius: 8 }}>
-        <Text style={{ color: colors.accent }}>再取得</Text>
-      </Pressable>
-    </View>
-    {!!client.message && <Text style={{ color: colors.muted }}>{client.message}</Text>}
     {layout && geometry && layer && <>
       <ScrollView horizontal style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 8 }}>
         {layout.layers.map((layer, i) => <Pressable key={i} accessibilityRole="button" accessibilityState={{ selected: client.layer === i }}
-          onPress={() => { client.layer = i; redraw(); }} style={{ padding: 10, backgroundColor: client.layer === i ? '#24736d' : colors.surface, borderRadius: 6 }}>
+          onPress={() => { client.layer = i; redraw(); onSelectLayer?.(); }} style={{ padding: 10, backgroundColor: client.layer === i ? '#24736d' : colors.surface, borderRadius: 6 }}>
           <Text style={{ color: colors.text }}>{layer.name}</Text>
         </Pressable>)}
       </ScrollView>
@@ -38,9 +35,9 @@ export function StudioKeyboard({ model }: { model: LikiModel }) {
         <Svg width="100%" height="100%">
           <G transform={`translate(${geometry.origin.x},${geometry.origin.y}) scale(${geometry.scale})`}>
             {layout.keys.map(key => {
-              const binding = layer.keys[key.index], active = studioKeyActive(binding, model.relayPressed, model.relayConsumer);
+              const binding = layer.keys[key.index], active = selectedKey === key.index || studioKeyActive(binding, model.relayPressed, model.relayConsumer);
               const lines = binding.label.split(' / '), size = Math.min(.22, (key.w - .12) / Math.max(2, ...lines.map(l => l.length * .6)));
-              return <G key={key.index} transform={`rotate(${key.rotation},${key.rx},${key.ry})`}>
+              return <G key={key.index} onPress={onSelectKey ? () => onSelectKey(key.index) : undefined} transform={`rotate(${key.rotation},${key.rx},${key.ry})`}>
                 <Rect x={key.x + .025} y={key.y + .025} width={key.w - .05} height={key.h - .05} rx={.08}
                   fill={active ? '#24736d' : colors.surface} stroke={active ? colors.accent : '#657789'} strokeWidth={.025} />
                 {lines.map((line, i) => <SvgText key={i} x={key.x + key.w / 2} y={key.y + key.h / 2 + size * (.3 + (i - (lines.length - 1) / 2) * 1.2)}

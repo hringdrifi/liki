@@ -1,4 +1,6 @@
 import { StudioClient } from './zmk.ts';
+import { parseRelayRemaps } from './remap.ts';
+import type { RelayRemap } from './remap.ts';
 export type Data = Record<string, any>;
 export type Point = { x: number; y: number };
 export type Binding = { name: string; code: number; modifier: number; layer: number; action: string; consumer: number };
@@ -14,6 +16,8 @@ export const mul = (a: Point, f: number): Point => ({ x: a.x * f, y: a.y * f });
 export const distance = (a: Point, b: Point): number => Math.hypot(a.x - b.x, a.y - b.y);
 export const zero = (): Point => ({ x: 0, y: 0 });
 export const clamp = (v: number, low: number, high: number) => Math.max(low, Math.min(high, v));
+export const KEY_PITCH_MIN_MM = 3, KEY_PITCH_MAX_MM = 24;
+export const TRACKPAD_PANEL_MIN_PERCENT = 10, TRACKPAD_PANEL_MAX_PERCENT = 70;
 export function rotate(k: KeyShape, p: Point, inverse = false): Point {
   const a = k.rotation * Math.PI / 180 * (inverse ? -1 : 1), dx = p.x - k.rx, dy = p.y - k.ry;
   return { x: k.rx + dx * Math.cos(a) - dy * Math.sin(a), y: k.ry + dx * Math.sin(a) + dy * Math.cos(a) };
@@ -43,8 +47,8 @@ export class Geometry {
       return inside(local, k.x, k.y, k.w, k.h) || inside(local, k.x + k.x2, k.y + k.y2, k.w2, k.h2);
     });
   }
-  zoomAt(factor: number, focus: Point, manual: boolean) {
-    const before = this.world(focus); this.zoom = clamp(this.zoom * factor, manual ? .25 : 1, 5);
+  zoomAt(factor: number, focus: Point, minZoom: number, maxZoom: number) {
+    const before = this.world(focus); this.zoom = clamp(this.zoom * factor, minZoom, maxZoom);
     this.pan = add(this.pan, sub(focus, add(this.origin, mul(before, this.scale))));
   }
   save(density: number): Data { return { zoom: this.zoom, pan_x: this.pan.x * density, pan_y: this.pan.y * density }; }
@@ -62,7 +66,14 @@ export class LikiModel {
   selectedName?: string; selectedAddress?: string; overrides: Data = {}; layers: Data = {}; inferred: Data = {};
   density = 1; xdpi = 160; initialized = false; editing = false; settingsVisible = false; showingControls = false;
   relayMode = false; relayPaused = false;
-  readonly studio = new StudioClient(bytes => this.call('studioWrite', { bytes }), () => this.listeners.forEach(fn => fn()));
+  isZmkKeyboard = false; externalEditing = false; externalEditZmk = false; relayLearning = false;
+  readonly studio = new StudioClient(bytes => this.call('studioWrite', { bytes }), () => {
+    if (this.studio.ready) {
+      this.isZmkKeyboard = true;
+      if (this.externalEditing && !this.externalEditZmk) { this.externalEditZmk = true; this.relayLearning = false; this.syncPage(); }
+    }
+    this.listeners.forEach(fn => fn());
+  });
   relayPressed: number[] = []; relayConsumer = 0;
   layer = 0; editLayer = 0; modifiers = 0; layerKey?: number; oneShotReturn?: number; oneShotKey?: number;
   momentaryPrevious?: number; momentaryKey?: number; momentaryTarget?: number; baseSnapshot?: string; layersSnapshot?: string;
@@ -72,6 +83,46 @@ export class LikiModel {
   flag(key: string) { return this.settings[key] === true; }
   num(key: string) { return Number(this.settings[key] ?? 0); }
   get connected() { return this.status.connected === true; }
+  get relayRemaps() { return parseRelayRemaps(this.preferences.relay_remaps ?? '[]'); }
+  async saveRelayRemaps(rules: RelayRemap[]) {
+    const value = JSON.stringify(parseRelayRemaps(JSON.stringify(rules)));
+    await this.call('relayRemaps', { value }); this.preferences.relay_remaps = value; this.changed();
+  }
+  beginExternalEdit() {
+    if (!this.status.remapSupported) throw Error('キー編集対応のネイティブビルドをインストールしてください');
+    this.externalEditZmk = this.isZmkKeyboard; this.externalEditing = true; this.relayLearning = false; this.syncPage(); this.changed();
+  }
+  endExternalEdit() {
+    if (this.studio.busy) throw Error('Studioの処理が完了するまでお待ちください');
+    if (this.studio.dirty) throw Error('キーボードに未保存の変更があります。保存または破棄してください');
+    this.externalEditing = this.relayLearning = false; this.syncPage(); this.changed();
+  }
+  learnRelayKey(enabled: boolean) { this.relayLearning = enabled; this.syncPage(); this.changed(); }
+  get transport() { return this.status.transport === 'classic' ? 'classic' : 'ble'; }
+  async selectTransport(value: 'ble' | 'classic') {
+    this.acceptStatus(await this.call('transport', { value }));
+    if (value === 'classic' && this.preferences.input_mode === 'relay') await this.persist({ input_mode: null });
+    this.syncPage();
+  }
+  get trackpadPanelEnabled() { return this.preferences.trackpad_panel_enabled === 'true'; }
+  get trackpadPanelSize() {
+    const size = Number(this.preferences.trackpad_panel_size ?? 33);
+    return Number.isFinite(size) ? clamp(size, TRACKPAD_PANEL_MIN_PERCENT, TRACKPAD_PANEL_MAX_PERCENT) : 33;
+  }
+  async setTrackpadPanelSize(size: number) {
+    if (!Number.isFinite(size)) throw Error('トラックパッドのサイズが不正です');
+    await this.persist({ trackpad_panel_size: String(clamp(Math.round(size), TRACKPAD_PANEL_MIN_PERCENT, TRACKPAD_PANEL_MAX_PERCENT)) }); this.changed();
+  }
+  get trackpadPanelPosition(): 'bottom' | 'top' | 'left' | 'right' {
+    const value = this.preferences.trackpad_panel_position;
+    return ['top', 'left', 'right'].includes(value) ? value : 'bottom';
+  }
+  async setTrackpadPanelEnabled(enabled: boolean) {
+    await this.persist({ trackpad_panel_enabled: enabled ? 'true' : null }); this.changed();
+  }
+  async setTrackpadPanelPosition(position: 'bottom' | 'top' | 'left' | 'right') {
+    await this.persist({ trackpad_panel_position: position }); this.changed();
+  }
   get devices(): Data[] { return this.status.devices ?? []; }
   get saved(): Data[] {
     try { return JSON.parse(this.preferences.saved_layouts ?? '[]').filter((e: Data) => e && typeof e.name === 'string' && e.name.trim() &&
@@ -111,6 +162,11 @@ export class LikiModel {
   acceptStatus(status: Data) {
     if (status.studioBytes) { this.studio.receive(status.studioBytes); return; }
     if (status.studioState) {
+      if (status.studioState.ready) {
+        this.isZmkKeyboard = true;
+        if (this.externalEditing && !this.externalEditZmk) { this.externalEditZmk = true; this.relayLearning = false; this.syncPage(); }
+        else this.syncPage();
+      }
       this.studio.reset(status.studioState.message);
       if (status.studioState.ready) void this.studio.load();
       return;
@@ -119,17 +175,25 @@ export class LikiModel {
       this.relayPressed = status.relayInput.pressed; this.relayConsumer = status.relayInput.consumer;
       this.listeners.forEach(fn => fn()); return;
     }
+    const keyboardChanged = JSON.stringify(this.status.keyboards ?? []) !== JSON.stringify(status.keyboards ?? []);
+    const remapChanged = keyboardChanged && this.isZmkKeyboard;
+    if (keyboardChanged) this.isZmkKeyboard = false;
     this.status = status;
-    if (this.connected !== this.showingControls && !status.restoring) { this.showingControls = this.connected; this.settingsVisible = false; this.syncPage(); }
+    if (status.relaySupported === false) { this.relayMode = false; this.relayPressed = []; this.relayConsumer = 0; }
+    if (this.connected !== this.showingControls && !status.restoring) { this.showingControls = this.connected; this.settingsVisible = false;
+      if (!this.connected) this.externalEditing = this.relayLearning = false;
+      this.syncPage(); }
     if (!this.devices.some(d => d.address === this.selectedAddress)) this.selectedAddress =
       this.devices.some(d => d.address === status.lastAddress) ? status.lastAddress : this.devices[0]?.address;
+    if (remapChanged) this.syncPage();
     this.changed();
   }
   async refresh() { this.acceptStatus(await this.call('status')); this.syncPage(); }
   syncPage() {
-    const relay = this.relayMode && !this.relayPaused && !this.editing && !this.settingsVisible && this.showingControls;
+    const studio = this.relayMode && !this.relayPaused && !this.editing && !this.settingsVisible && this.showingControls;
+    const relay = studio && (!this.externalEditing || this.relayLearning);
     if (!relay) { this.relayPressed = []; this.relayConsumer = 0; }
-    this.send('page', { controls: this.showingControls, settings: this.settingsVisible, relay });
+    this.send('page', { controls: this.showingControls, settings: this.settingsVisible, relay, studio, relayLearning: this.relayLearning, remap: !this.isZmkKeyboard });
   }
   async setRelayMode(enabled: boolean) {
     if (enabled && this.status.relaySupported !== true) throw Error('外付けキーボードの中継に対応したネイティブビルドをインストールしてください');
@@ -137,8 +201,15 @@ export class LikiModel {
     this.relayMode = enabled; this.editing = false; this.setLayer(0); this.syncPage(); this.changed();
   }
   pauseRelay(paused: boolean) { if (this.relayPaused !== paused) { this.relayPaused = paused; this.syncPage(); } }
+  zoomKeyboard(factor: number, focus: Point) {
+    const g = this.geometry;
+    if (!g) return;
+    const pitch = g.base * this.density * 25.4 / this.xdpi;
+    if (pitch > 0 && Number.isFinite(pitch)) g.zoomAt(factor, focus, KEY_PITCH_MIN_MM / pitch, KEY_PITCH_MAX_MM / pitch);
+  }
   async setSetting(key: string, value: any) {
     this.settings = await this.call('setting', { key, value }); if (key === 'sticky_modifiers' && !value) this.modifiers = 0;
+    if (key === 'key_pitch_mm' && this.geometry) this.geometry.zoom = 1;
     this.fitGeometry(); this.changed();
   }
   setViewport(geometry: Geometry, width: number, height: number) {

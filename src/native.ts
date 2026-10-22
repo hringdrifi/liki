@@ -12,8 +12,8 @@ export const unavailable = Platform.OS !== 'android' && Platform.OS !== 'ios' ? 
 export const backend: Backend = Platform.OS === 'ios' && hid ? createIosBackend(hid) : {
   async invoke(method, args = {}) {
     if (!hid) throw Error(unavailable);
-    if (Platform.OS === 'android' && Number(Platform.Version) >= 31 && (method === 'ready' || method === 'discoverable')) {
-      const permission = method === 'ready' ? PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT : PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE;
+    if (Platform.OS === 'android' && Number(Platform.Version) >= 31 && (method === 'ready' || method === 'transport' || method === 'discoverable')) {
+      const permission = method === 'discoverable' ? PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE : PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT;
       if (!await PermissionsAndroid.check(permission)) {
         const granted = await PermissionsAndroid.request(permission);
         if (granted !== PermissionsAndroid.RESULTS.GRANTED && method === 'discoverable') throw Error('Bluetooth公開権限が必要です');

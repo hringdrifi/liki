@@ -1,4 +1,4 @@
-// Read-only ZMK Studio RPC client. Schema: zmkfirmware/zmk-studio-messages (MIT).
+// ZMK Studio RPC client. Schema: zmkfirmware/zmk-studio-messages (MIT).
 import type { KeyShape } from './model.ts';
 import { iosBindings } from './ios-layout.ts';
 
@@ -6,10 +6,12 @@ type Message = Map<number, (number | Uint8Array)[]>;
 export function protobuf(data: Uint8Array): Message {
   let pos = 0;
   const varint = () => {
-    let value = 0;
-    for (let shift = 0; shift < 49 && pos < data.length; shift += 7) {
-      const byte = data[pos++]; value += (byte & 127) * 2 ** shift;
-      if (byte < 128) return value;
+    let value = 0n;
+    for (let shift = 0; shift < 70 && pos < data.length; shift += 7) {
+      const byte = data[pos++];
+      if (shift === 63 && byte > 1) throw Error('Studioの整数が不正です');
+      value |= BigInt(byte & 127) << BigInt(shift);
+      if (byte < 128) return Number(value > BigInt(Number.MAX_SAFE_INTEGER) ? BigInt.asIntN(32, value) : value);
     }
     throw Error('Studioの応答が不正です');
   };
@@ -54,7 +56,34 @@ export class StudioFrames {
   }
 }
 export type StudioKey = { label: string; usages: number[] };
-export type StudioLayout = { name: string; keys: KeyShape[]; layers: { name: string; keys: StudioKey[] }[] };
+export type StudioBinding = { behaviorId: number; param1: number; param2: number };
+export type StudioParameter = { name: string; kind: 'none' | 'constant' | 'range' | 'hid' | 'layer'; value?: number; min?: number; max?: number; keyboardMax?: number; consumerMax?: number };
+export type StudioBehavior = { id: number; name: string; parameters: StudioParameter[][][] };
+export type StudioLayout = { name: string; keys: KeyShape[]; layers: { id: number; name: string; bindings: StudioBinding[]; keys: StudioKey[] }[] };
+const rawBinding = (binding: Message): StudioBinding => ({ behaviorId: signed(binding, 1), param1: number(binding, 2), param2: number(binding, 3) });
+const encodeBinding = (binding: StudioBinding) => [...field(1, binding.behaviorId < 0 ? -binding.behaviorId * 2 - 1 : binding.behaviorId * 2), ...field(2, binding.param1), ...field(3, binding.param2)];
+const int32 = (value: number) => value > 0x7fffffff ? (value >>> 0) | 0 : value;
+export function studioBehavior(details: Message): StudioBehavior {
+  return { id: number(details, 1), name: string(details, 2), parameters: children(details, 3).map(set => [1, 2].map(index => children(set, index).map(value => {
+    const name = string(value, 1);
+    if (value.has(3)) return { name, kind: 'constant' as const, value: number(value, 3) };
+    if (value.has(4)) { const range = child(value, 4); return { name, kind: 'range' as const, min: int32(number(range, 1)), max: int32(number(range, 2)) }; }
+    if (value.has(5)) { const hid = child(value, 5); return { name, kind: 'hid' as const, keyboardMax: number(hid, 1), consumerMax: number(hid, 2) }; }
+    return { name, kind: value.has(6) ? 'layer' as const : 'none' as const };
+  }))) };
+}
+export function studioParameterMatches(option: StudioParameter, value: number, layerIds: number[]) {
+  if (option.kind === 'none') return value === 0;
+  if (option.kind === 'constant') return value === option.value;
+  if (option.kind === 'range') { const n = option.min! < 0 ? int32(value) : value; return n >= option.min! && n <= option.max!; }
+  if (option.kind === 'layer') return layerIds.includes(value);
+  const page = (value >>> 16) & 255, code = value & 65535;
+  return (page === 7 && code <= option.keyboardMax! || page === 12 && code <= option.consumerMax!) && code > 0;
+}
+export function studioParameters(behavior: StudioBehavior, index: number, param1: number, layerIds: number[]) {
+  return behavior.parameters.filter(set => index === 0 || !set[0].length || set[0].some(option => studioParameterMatches(option, param1, layerIds)))
+    .flatMap(set => set[index]);
+}
 export function physicalLayout(response: Message) {
   const layouts = children(response, 2), layout = layouts[number(response, 1)];
   if (!layout) throw Error('ZMKの物理レイアウトがありません');
@@ -67,7 +96,7 @@ export function physicalLayout(response: Message) {
   });
   return { name: string(layout, 1), keys };
 }
-function usageLabel(usage: number) {
+export function usageLabel(usage: number) {
   const page = (usage >>> 16) & 255, code = usage & 65535, mods = usage >>> 24;
   const binding = iosBindings.find(b => page === 7 ? b.code === code && !b.modifier : page === 12 && b.consumer === code);
   const name = page === 7 && code >= 0xe0 && code <= 0xe7 ? ['L Ctrl', 'L Shift', 'L Alt', 'L GUI', 'R Ctrl', 'R Shift', 'R Alt', 'R GUI'][code - 0xe0] : binding?.name ?? `HID ${page}:${code}`;
@@ -97,12 +126,16 @@ export function studioKeyActive(key: StudioKey, pressed: number[], consumer: num
 
 export class StudioClient {
   layout?: StudioLayout; message = ''; layer = 0; ready = false;
+  busy = false; dirty = false;
+  behaviors: StudioBehavior[] = [];
+  private details = new Map<number, Message>();
   private frames = new StudioFrames(); private serial = 0; private generation = 0;
   private receivedBytes = 0;
   private pending?: { id: number; resolve(m: Message): void; reject(e: Error): void; timer: ReturnType<typeof setTimeout> };
   private write: (bytes: number[]) => Promise<any>; private changed: () => void;
   constructor(write: (bytes: number[]) => Promise<any>, changed: () => void) { this.write = write; this.changed = changed; }
   reset(message = '') {
+    this.behaviors = []; this.details.clear(); this.dirty = false;
     this.generation++; this.ready = false; this.layout = undefined; this.layer = 0; this.message = message; this.frames = new StudioFrames(); this.receivedBytes = 0;
     if (this.pending) { clearTimeout(this.pending.timer); this.pending.reject(Error('Studio接続を終了しました')); this.pending = undefined; }
     this.changed();
@@ -122,6 +155,7 @@ export class StudioClient {
     } catch (e) { this.reset(String(e)); }
   }
   private request(subsystem: number, payload: number[], label: string): Promise<Message> {
+    if (this.pending) return Promise.reject(Error('Studioの通信が処理中です'));
     const id = ++this.serial, before = this.receivedBytes;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { if (this.pending?.id === id) { this.pending = undefined; reject(Error(`Studioの応答がありません（${label}、受信${this.receivedBytes - before}バイト）`)); } }, 8000);
@@ -154,8 +188,78 @@ export class StudioClient {
       }
       if (generation !== this.generation) return;
       if (!layers.length || layers.some(l => children(l, 3).length !== physical.keys.length)) throw Error('ZMKの配置とキー割り当てが一致しません');
-      this.layout = { ...physical, layers: layers.map(l => ({ name: string(l, 2) || `Layer ${number(l, 1)}`, keys: children(l, 3).map(b => studioBinding(b, details.get(signed(b, 1)), physical.name)) })) };
+      this.details = details;
+      this.layout = { ...physical, layers: layers.map(l => ({ id: number(l, 1), name: string(l, 2) || `Layer ${number(l, 1)}`,
+        bindings: children(l, 3).map(rawBinding), keys: children(l, 3).map(b => studioBinding(b, details.get(signed(b, 1)), physical.name)) })) };
       this.message = ''; this.ready = true; this.changed();
     } catch (e) { if (generation === this.generation) { this.message = String(e); this.changed(); } }
+  }
+  async loadBehaviors() {
+    if (!this.ready || this.busy || this.pending) throw Error('Studioの取得が完了してから編集してください');
+    const generation = this.generation; this.busy = true; this.changed();
+    try {
+      const list = child(child(await this.request(4, field(1, 1), 'ビヘイビア一覧'), 4), 1), ids: number[] = [];
+      for (const value of list.get(1) ?? []) {
+        if (typeof value === 'number') ids.push(value);
+        else { let n = 0, shift = 0; for (const byte of value) { n += (byte & 127) * 2 ** shift; if (byte < 128) { ids.push(n); n = 0; shift = 0; } else { shift += 7; if (shift > 35) throw Error('Studioの一覧が不正です'); } } if (shift) throw Error('Studioの一覧が不正です'); }
+      }
+      if (!ids.length || ids.length > 512) throw Error('Studioのビヘイビア一覧を取得できません');
+      const details = new Map(this.details);
+      for (const id of ids) {
+        if (generation !== this.generation) throw Error('Studio接続が変更されました');
+        if (!details.has(id)) details.set(id, child(child(await this.request(4, field(2, field(1, id)), 'ビヘイビア詳細'), 4), 2));
+      }
+      if (generation !== this.generation) throw Error('Studio接続が変更されました');
+      this.details = details; this.behaviors = ids.map(id => studioBehavior(details.get(id)!));
+    } finally { this.busy = false; this.changed(); }
+  }
+  private async persistChanges() {
+    const generation = this.generation;
+    const result = child(child(await this.request(5, field(4, 1), '保存'), 5), 4);
+    if (generation !== this.generation) throw Error('Studio接続が変更されました');
+    if (!result.has(1) || number(result, 1) !== 1) throw Error(`キーボードへの保存に失敗しました（${number(result, 2)}）。変更は未保存です`);
+    this.dirty = false;
+  }
+  async saveBinding(layerIndex: number, position: number, binding: StudioBinding) {
+    if (!this.ready || this.busy || this.pending || this.dirty) throw Error('Studioの処理中または未保存の変更があります');
+    const layer = this.layout?.layers[layerIndex], behavior = this.behaviors.find(b => b.id === binding.behaviorId);
+    if (!layer || !layer.bindings[position] || !behavior) throw Error('編集対象が不正です');
+    const layerIds = this.layout!.layers.map(l => l.id);
+    for (const [index, value] of [binding.param1, binding.param2].entries()) {
+      const options = studioParameters(behavior, index, binding.param1, layerIds);
+      if (!Number.isInteger(value) || value < 0 || value > 0xffffffff || (options.length ? !options.some(option => studioParameterMatches(option, value, layerIds)) : value !== 0)) throw Error('ビヘイビアのパラメーターが不正です');
+    }
+    const generation = this.generation;
+    this.busy = true; this.changed();
+    try {
+      const unsaved = child(await this.request(5, field(3, 1), '未保存の変更確認'), 5);
+      if (generation !== this.generation) throw Error('Studio接続が変更されました');
+      if (!unsaved.has(3) || number(unsaved, 3)) throw Error('キーボードに未保存の変更があります。Studioで保存または破棄してから編集してください');
+      this.dirty = true;
+      const result = child(await this.request(5, field(2, [...field(1, layer.id), ...field(2, position), ...field(3, encodeBinding(binding))]), 'キー割り当て変更'), 5);
+      if (generation !== this.generation) throw Error('Studio接続が変更されました');
+      if (!result.has(2)) throw Error('キー割り当て変更の結果を確認できません');
+      if (number(result, 2)) { this.dirty = false; throw Error(`Studioがキー割り当てを拒否しました（${number(result, 2)}）`); }
+      layer.bindings[position] = { ...binding }; layer.keys[position] = studioBinding(protobuf(Uint8Array.from(encodeBinding(binding))), this.details.get(binding.behaviorId), this.layout!.name);
+      await this.persistChanges();
+    } finally { this.busy = false; this.changed(); }
+  }
+  async savePending() {
+    if (!this.dirty || this.busy || this.pending) throw Error('保存対象がありません');
+    this.busy = true; this.changed();
+    try { await this.persistChanges(); await this.load(); if (this.message) throw Error(this.message); } finally { this.busy = false; this.changed(); }
+  }
+  async discardPending() {
+    if (!this.dirty || this.busy || this.pending) throw Error('破棄する変更がありません');
+    const generation = this.generation;
+    this.busy = true; this.changed();
+    try {
+      const result = child(await this.request(5, field(5, 1), '変更を破棄'), 5);
+      if (generation !== this.generation) throw Error('Studio接続が変更されました');
+      if (!result.has(5) || number(result, 5) !== 1) throw Error('変更を破棄できませんでした');
+      this.dirty = false;
+    } finally { this.busy = false; this.changed(); }
+    await this.load();
+    if (this.message) throw Error(this.message);
   }
 }

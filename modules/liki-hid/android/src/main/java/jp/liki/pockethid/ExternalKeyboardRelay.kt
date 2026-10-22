@@ -37,6 +37,14 @@ internal class ExternalKeyboardRelay(
     private var enabled = false
     private var foreground = true
     private var focused = true
+    private var remaps: Map<Int, List<Int>> = emptyMap()
+    private var learning = false
+    private var useRemaps = true
+    fun configureRemaps(rules: Map<Int, List<Int>> = remaps, learn: Boolean = learning, apply: Boolean = useRemaps) {
+        if (rules != remaps || learn != learning || apply != useRemaps) {
+            release(); remaps = rules; learning = learn; useRemaps = apply
+        }
+    }
 
     fun start() {
         if (!started) { input.registerInputDeviceListener(this, Handler(Looper.getMainLooper())); started = true }
@@ -57,7 +65,14 @@ internal class ExternalKeyboardRelay(
     fun foreground(value: Boolean) { if (foreground != value) { release(); foreground = value }; updateCapture() }
     fun focus(value: Boolean) { if (focused != value) { release(); focused = value }; updateCapture() }
     fun release() { state.clear(); mouseState.clear(); inputChanged(emptyList(), 0); if (enabled) { keyboard(state.keyboardReport()); consumer(0); mouse(0, 0, 0, 0) } }
-    private fun send() { keyboard(state.keyboardReport()); consumer(state.consumerUsage()); inputChanged(state.pressedUsages(), state.consumerUsage()) }
+    private fun send() {
+        val pressed = state.pressedUsages(); val media = state.consumerUsage()
+        if (!learning) {
+            val report = KeyboardRemapper.translate(pressed, media, if (useRemaps) remaps else emptyMap())
+            keyboard(report.keyboard); consumer(report.consumer)
+        }
+        inputChanged(pressed, media)
+    }
     private fun send(report: RelayMouseState.Report) { mouse(report.buttons, report.x, report.y, report.wheel) }
 
     fun updateCapture() {

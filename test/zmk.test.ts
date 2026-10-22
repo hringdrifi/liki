@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { field as f, frame, protobuf, StudioFrames, physicalLayout, StudioClient, studioBinding, studioKeyActive } from '../src/zmk.ts';
 import { LikiModel } from '../src/model.ts';
+import { bindingUsage, expandUsage, parseRelayRemaps } from '../src/remap.ts';
 
 const msg = (values: number[]) => protobuf(Uint8Array.from(values));
 const text = (s: string) => Array.from(new TextEncoder().encode(s));
@@ -10,6 +11,17 @@ const physical = [...f(2, [...f(1, text('Split')), ...f(2, attrs)])];
 const binding = [...f(1, 2), ...f(2, 0x70004)];
 const details = [...f(1, 1), ...f(2, text('Key Press')), ...f(3, f(1, f(5, [])))];
 const keymap = f(1, [...f(1, 0), ...f(2, text('Base')), ...f(3, binding)]);
+
+test('relay mappings validate HID pages, unique sources and target chords', () => {
+  const rules = [{ source: 0x70004, target: [0x700e1, 0x70005, 0x70005] }, { source: 0xc00e9, target: [] }];
+  assert.deepEqual(parseRelayRemaps(JSON.stringify(rules)), [{ source: 0x70004, target: [0x700e1, 0x70005] }, rules[1]]);
+  for (const bad of [[rules[0], rules[0]], [{ source: 0x70004, target: [0x80001] }], [{ source: 458756.5, target: [] }]]) {
+    assert.throws(() => parseRelayRemaps(JSON.stringify(bad)));
+  }
+  assert.deepEqual(expandUsage(0x03070004), [0x700e0, 0x700e1, 0x70004]);
+  assert.equal(bindingUsage({ name: 'Ctrl', code: 0, modifier: 1, consumer: 0, action: 'NONE', layer: 0 }), 0x700e0);
+  assert.deepEqual(expandUsage(0), []);
+});
 
 test('Studio framing handles special bytes and arbitrary BLE packet splits', () => {
   const frames = new StudioFrames();
@@ -115,4 +127,70 @@ test('Studio timeout distinguishes missing and incomplete responses without assu
   t.mock.timers.tick(8000);
   await second;
   assert.match(client.message, /受信0バイト/);
+});
+
+async function editableStudio(respond?: (operation: number, payload: ReturnType<typeof protobuf>) => number[] | undefined) {
+  const writes: { operation: number; payload: ReturnType<typeof protobuf> }[] = [];
+  const metadata = [...f(1, 1), ...f(2, text('Key Press')), ...f(3, f(1, f(5, [...f(1, 0xe7), ...f(2, 0x2ff)])))];
+  let client: StudioClient;
+  client = new StudioClient(async data => {
+    const request = protobuf(new StudioFrames().push(data)[0]), id = request.get(1)![0] as number;
+    const subsystem = request.has(5) ? 5 : 4, payload = protobuf(request.get(subsystem)![0] as Uint8Array), operation = [...payload.keys()][0];
+    if (subsystem === 5 && [2, 3, 4, 5].includes(operation)) writes.push({ operation, payload });
+    const custom = subsystem === 5 ? respond?.(operation, payload) : undefined;
+    const response = custom ?? (subsystem === 4 ? f(operation, operation === 1 ? f(1, [1]) : metadata) :
+      operation === 6 ? f(6, physical) : operation === 1 ? f(1, f(1, [...f(1, 9), ...f(2, text('Base')), ...f(3, binding)])) :
+      operation === 2 || operation === 3 ? f(operation, 0) : operation === 4 ? f(4, f(1, 1)) : f(5, 1));
+    client.receive(frame(f(1, [...f(1, id), ...f(subsystem, response)])));
+  }, () => {});
+  await client.load(); await client.loadBehaviors(); return { client, writes };
+}
+
+test('Studio edits use the real layer ID and persist only after an explicit save', async () => {
+  const { client, writes } = await editableStudio();
+  assert.equal(writes.length, 0);
+  await client.saveBinding(0, 0, { behaviorId: 1, param1: 0x02070005, param2: 0 });
+  assert.deepEqual(writes.map(w => w.operation), [3, 2, 4]);
+  const request = protobuf(writes[1].payload.get(2)![0] as Uint8Array);
+  assert.equal(request.get(1)![0], 9); assert.equal(request.get(2)![0], 0);
+  const assigned = protobuf(request.get(3)![0] as Uint8Array);
+  assert.equal(assigned.get(1)![0], 2); assert.equal(assigned.get(2)![0], 0x02070005);
+  assert.equal(client.layout!.layers[0].bindings[0].param1, 0x02070005);
+  assert.equal(client.dirty, false); assert.equal(client.busy, false);
+});
+
+test('Studio refuses invalid parameters and existing unsaved changes without mutating the keyboard', async () => {
+  const { client, writes } = await editableStudio(op => op === 3 ? f(3, 1) : undefined);
+  await assert.rejects(client.saveBinding(0, 0, { behaviorId: 1, param1: 0x80001, param2: 0 }), /パラメーター/);
+  assert.equal(writes.length, 0);
+  await assert.rejects(client.saveBinding(0, 0, { behaviorId: 1, param1: 0x70005, param2: 0 }), /未保存/);
+  assert.deepEqual(writes.map(w => w.operation), [3]); assert.equal(client.dirty, false);
+});
+
+test('Studio preserves an unsaved change on persistence failure and retries saving without another assignment', async () => {
+  let fail = true;
+  const { client, writes } = await editableStudio(op => op === 4 && fail ? f(4, f(2, 3)) : undefined);
+  await assert.rejects(client.saveBinding(0, 0, { behaviorId: 1, param1: 0x70005, param2: 0 }), /保存に失敗/);
+  assert.equal(client.dirty, true); assert.equal(client.busy, false);
+  await assert.rejects(client.saveBinding(0, 0, { behaviorId: 1, param1: 0x70006, param2: 0 }), /未保存/);
+  fail = false; await client.savePending();
+  assert.deepEqual(writes.map(w => w.operation), [3, 2, 4, 4]); assert.equal(client.dirty, false);
+});
+
+test('Studio rejects refused assignments and requires explicit discard for an unconfirmed assignment', async () => {
+  const rejected = await editableStudio(op => op === 2 ? f(2, 1) : undefined);
+  await assert.rejects(rejected.client.saveBinding(0, 0, { behaviorId: 1, param1: 0x70005, param2: 0 }), /拒否/);
+  assert.equal(rejected.client.dirty, false); assert.equal(rejected.client.layout!.layers[0].bindings[0].param1, 0x70004);
+  const unknown = await editableStudio(op => op === 2 ? [] : undefined);
+  await assert.rejects(unknown.client.saveBinding(0, 0, { behaviorId: 1, param1: 0x70005, param2: 0 }), /確認できません/);
+  assert.equal(unknown.client.dirty, true);
+  await unknown.client.discardPending();
+  assert.equal(unknown.client.dirty, false); assert.equal(unknown.client.ready, true);
+  assert.deepEqual(unknown.writes.map(w => w.operation), [3, 2, 5]);
+});
+
+test('Studio decodes negative int32 parameter ranges encoded as ten-byte varints', () => {
+  const decoded = msg([8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 1]);
+  assert.equal(decoded.get(1)![0], -1);
+  assert.throws(() => msg([8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 2]));
 });

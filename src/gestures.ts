@@ -72,6 +72,19 @@ export class Trackpad {
   cancel() { clearTimeout(this.hold); if (this.dragging) this.model.send('mouseUp', { button: 1 }); this.dragging = this.scrolling = this.tapDragArmed = false; this.gesture = 0; this.lastTapTime = 0; this.starts.clear(); }
 }
 
+export class TrackpadGesture {
+  points = new Map<number, Point>();
+  trackpad: Trackpad;
+  constructor(model: LikiModel) { this.trackpad = new Trackpad(model); }
+  touch(event: Touch) {
+    if (event.kind === 'cancel') { this.cancel(); return; }
+    this.points.set(event.id, event.position);
+    this.trackpad.touch(event, this.points);
+    if (event.kind === 'up') this.points.delete(event.id);
+  }
+  cancel() { this.trackpad.cancel(); this.points.clear(); }
+}
+
 export class KeyboardGesture {
   geometry: Geometry;
   model: LikiModel; points = new Map<number, Point>(); trackpad: Trackpad; selected?: KeyShape; down = zero(); last = zero();
@@ -114,7 +127,7 @@ export class KeyboardGesture {
     } else if (e.kind === 'down' && this.points.size === 2) { this.pinching = true; this.pinchSpan = this.span(); }
     else if (e.kind === 'move') {
       if (this.points.size >= 2) {
-        const span = this.span(), [a, b] = [...this.points.values()]; if (m.flag('pinch_zoom') && this.pinchSpan > 0) g.zoomAt(span / this.pinchSpan, mul(add(a, b), .5), m.num('key_pitch_mm') > 0); this.pinchSpan = span;
+        const span = this.span(), [a, b] = [...this.points.values()]; if (m.flag('pinch_zoom') && this.pinchSpan > 0) m.zoomKeyboard(span / this.pinchSpan, mul(add(a, b), .5)); this.pinchSpan = span;
       } else if (!this.pinching) {
         if (distance(e.position, this.down) > 8) this.moved = true;
         if (this.moved && m.flag('drag_move_keyboard')) g.pan = add(g.pan, sub(e.position, this.last)); this.last = e.position;

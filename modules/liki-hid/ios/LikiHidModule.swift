@@ -63,12 +63,25 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
     private var wasConnected = false
     private var errorMessage: String?
     private var relayRequested = false
-    private lazy var studio = StudioTransport { [weak self] in self?.emit($0) }
-    private lazy var relay = KeyboardRelay(connected: { [weak self] in self?.connected == true },
+    private var relayRemaps: [Int: [Int]] = [:]
+    private var relayLearning = false, studioConnected = false
+    private var relayRemapEnabled = true
+    private lazy var studio: StudioTransport = StudioTransport { [weak self] event in
+        guard let self else { return }
+        if let state = event["studioState"] as? [String: Any] {
+            let ready = state["ready"] as? Bool == true
+            if self.studioConnected != ready { self.relay.clear(); self.studioConnected = ready }
+        }
+        self.emit(event)
+    }
+    private lazy var relay: KeyboardRelay = KeyboardRelay(connected: { [weak self] in self?.connected == true },
         send: { [weak self] modifiers, keys in
             guard let self else { return }
             self.emit(["relayInput": ["pressed": keys + (0..<8).filter { modifiers & (1 << $0) != 0 }.map { 0xe0 + $0 }, "consumer": 0]])
-            if self.connected { self.hid.sendKeyboard(modifiers: modifiers, codes: keys) }
+            if self.connected && !self.relayLearning {
+                let mapped = KeyboardRemapper.translate(modifiers: modifiers, keys: keys, rules: self.studioConnected || !self.relayRemapEnabled ? [:] : self.relayRemaps)
+                self.hid.sendKeyboard(modifiers: mapped.modifiers, codes: mapped.keys); self.hid.sendConsumer(usage: mapped.consumer)
+            }
         }, changed: { [weak self] in
             guard let self else { return }; self.publish()
             if self.relayRequested { self.studio.retry() }
@@ -118,10 +131,11 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         else if connected { message = "BLE HID接続中" }
         else if hid.isAdvertising { message = "公開中です。PCのBluetooth設定からLikiを追加してください" }
         else if hid.isHIDServiceAdded { message = "準備完了" }
+        else if central?.state == .poweredOn { message = "準備完了。BLEペアリング待機を押してください" }
         else { message = "Bluetoothを準備中…" }
         return ["message": message, "connected": connected, "connecting": false, "cancelling": false,
                 "restoring": false, "registered": hid.isHIDServiceAdded,
-                "relaySupported": true, "keyboards": relay.devices + mouseRelay.devices,
+                "relaySupported": true, "remapSupported": true, "keyboards": relay.devices + mouseRelay.devices,
                 "devices": [], "address": hid.subscribedCentrals.keys.first?.uuidString,
                 "lastAddress": preferences["last_device_address"]]
     }
@@ -147,6 +161,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         func int(_ key: String) -> Int { (args[key] as? NSNumber)?.intValue ?? 0 }
         switch method {
         case "initialize":
+            relayRemaps = try KeyboardRemapper.parse(preferences["relay_remaps"] ?? "[]")
             applyWindowSettings()
             let scale = UIScreen.main.scale
             return ["preferences": preferences, "settings": settings, "status": status, "session": session,
@@ -175,13 +190,17 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         case "relayDiagnostics": return ["mouse": mouseRelay.diagnostics, "studio": studio.diagnostics]
         #endif
         case "studioRetry": studio.retry()
+        case "relayRemaps":
+            let json = args["value"] as? String ?? "[]", rules = try KeyboardRemapper.parse(json)
+            relay.clear(); relayRemaps = rules; savePreferences(["relay_remaps": json])
         case "studioWrite":
             guard let bytes = args["bytes"] as? [NSNumber], !bytes.isEmpty else {
                 throw NSError(domain: "Liki", code: 10, userInfo: [NSLocalizedDescriptionKey: "Studioの送信データを変換できません"])
             }
             try studio.write(bytes.map { UInt8(clamping: $0.intValue) })
         case "asset": return try asset(args["name"] as? String ?? "")
-        case "ready", "discoverable": start()
+        case "ready": prepare()
+        case "discoverable": start()
         case "connect": throw NSError(domain: "Liki", code: 2, userInfo: [NSLocalizedDescriptionKey: "PCのBluetooth設定からLikiに接続してください"])
         case "disconnect", "cancelConnection":
             releaseInputs(); hid.disconnect(); central?.delegate = nil; central = nil; isStarting = false; publish()
@@ -202,7 +221,11 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
             let requested = args["relay"] as? Bool == true && controls && !settingsPage
             if relayRequested != requested { releaseInputs(); relayRequested = requested }
             relay.enable(requested); mouseRelay.enable(requested); applyWindowSettings()
-            studio.enable(requested)
+            let learning = args["relayLearning"] as? Bool == true
+            if relayLearning != learning { relay.clear(); relayLearning = learning }
+            let remapEnabled = args["remap"] as? Bool != false
+            if relayRemapEnabled != remapEnabled { relay.clear(); relayRemapEnabled = remapEnabled }
+            studio.enable(args["studio"] as? Bool ?? requested)
         case "setting":
             let key = args["key"] as? String ?? ""
             guard settingsDefaults[key] != nil || (0...3).contains(where: { key == "layer_border_color_\($0)" }),
@@ -215,12 +238,16 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         }
         return nil
     }
-    private func start() {
+    private func prepare() {
         errorMessage = nil
         if central == nil {
-            isStarting = true
             central = CBCentralManager(delegate: self, queue: .main, options: [CBCentralManagerOptionShowPowerAlertKey: true])
-        } else if central?.state == .poweredOn { hid.start() }
+        }
+    }
+    private func start() {
+        isStarting = true
+        prepare()
+        if central?.state == .poweredOn { hid.start() }
     }
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         if central.state == .poweredOn {
