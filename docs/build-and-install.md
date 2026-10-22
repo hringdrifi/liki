@@ -140,33 +140,7 @@ npx --yes eas-cli@latest build --platform android --profile preview
 
 完了後にEASの案内からAPKを取得し、端末へインストールします。既存の署名鍵があるプロジェクトでは、既存APKとの更新互換性を確認してください。`preview`で作成したことだけでは、GitHub配布版と署名が同じであるとは限りません。
 
-## 6. WindowsからiOS開発ビルドを作る
-
-WindowsではiOSのネイティブビルドをローカル実行せず、EAS Buildを使います。Expoアカウント、Apple Developerの署名環境、実機iPhoneが必要です。
-
-### iPhoneを登録する
-
-Expoへのログイン後、リポジトリ直下で実行します。
-
-```powershell
-npx --yes eas-cli@latest device:create
-```
-
-登録方式はWebsiteを選び、表示されたURLを対象iPhoneのSafariで開いて登録します。端末登録とビルドで同じApple Developerチームを使用します。ログイン情報・2段階認証は本人が入力してください。
-
-### ビルドして導入する
-
-```powershell
-npx --yes eas-cli@latest build --platform ios --profile development
-```
-
-`development`はAd Hocによる内部配布用の開発ビルドです。ビルド時のプロビジョニングプロファイルに含まれる端末だけにインストールできます。新しい端末を登録した場合は、プロファイルを更新して再ビルドします。
-
-ビルド完了後、インストールページを対象iPhoneのSafariで開き、Installを押します。iOSに要求された場合は開発者モードを有効にし、画面の案内に従います。Appleの利用規約更新によって処理が止まった場合は、Account Holderによる確認・承諾が必要です。
-
-このリポジトリでは署名済みIPAを公開配布しません。各自の署名環境を使用し、IPA・署名用資格情報・端末識別情報・開発ビルドのダウンロードリンクを公開ドキュメントへ含めないでください。
-
-## 7. MacとXcodeでiOSをローカルビルドする
+## 6. MacとXcodeでiOSをローカルビルドする
 
 ### Macを準備する
 
@@ -211,7 +185,7 @@ Swift実装は`modules/liki-hid/ios/`、Podspecは`modules/liki-hid/LikiHid.pods
 5. Bundle Identifierが自分の署名環境で使用できるか確認します。既存の`jp.liki.pockethid`を登録できない場合、自分のフォークでは`app.config.js`の`ios.bundleIdentifier`に自分用の識別子を設定し、prebuildを再実行します。識別子を変えると別アプリとして導入されます。
 6. iPhoneの「設定」→「プライバシーとセキュリティ」→「デベロッパモード」をオンにし、再起動後の確認まで完了します。[開発者モードの手順](https://docs.expo.dev/guides/ios-developer-mode/)
 
-Xcodeから接続端末へ直接導入する場合は、前節のEAS用`device:create`は不要です。Xcodeで開発署名を準備します。無料のPersonal Teamには有効期間や利用機能などの制限があり、EASのAd Hoc配布と同じ条件ではありません。
+Xcodeから接続端末へ直接導入する場合は、次節のEAS用`device:create`は不要です。Xcodeで開発署名を準備します。無料のPersonal Teamには有効期間や利用機能などの制限があり、EASのAd Hoc配布と同じ条件ではありません。
 
 ### Xcodeから実機へ導入する
 
@@ -236,6 +210,32 @@ npx expo run:ios --device
 接続したiPhoneを選ぶと、ビルド・インストールとMetroの起動を行います。Metroがすでに動いている場合は既存サーバーを使用します。[Expo CLIの実機ビルドと署名](https://docs.expo.dev/more/expo-cli/#compiling-ios)
 
 シミュレーターは画面の確認に使えますが、Bluetooth HIDの実機検証の代わりにはなりません。この文書のMacローカル手順は公式手順とリポジトリ設定を照合したもので、このWindows環境からMacでのビルド実行は検証していません。
+
+## 7. WindowsからiOS開発ビルドを作る
+
+WindowsではiOSのネイティブビルドをローカル実行せず、EAS Buildを使います。Expoアカウント、Apple Developerの署名環境、実機iPhoneが必要です。
+
+### iPhoneを登録する
+
+Expoへのログイン後、リポジトリ直下で実行します。
+
+```powershell
+npx --yes eas-cli@latest device:create
+```
+
+登録方式はWebsiteを選び、表示されたURLを対象iPhoneのSafariで開いて登録します。端末登録とビルドで同じApple Developerチームを使用します。ログイン情報・2段階認証は本人が入力してください。
+
+### ビルドして導入する
+
+```powershell
+npx --yes eas-cli@latest build --platform ios --profile development
+```
+
+`development`はAd Hocによる内部配布用の開発ビルドです。ビルド時のプロビジョニングプロファイルに含まれる端末だけにインストールできます。新しい端末を登録した場合は、プロファイルを更新して再ビルドします。
+
+ビルド完了後、インストールページを対象iPhoneのSafariで開き、Installを押します。iOSに要求された場合は開発者モードを有効にし、画面の案内に従います。Appleの利用規約更新によって処理が止まった場合は、Account Holderによる確認・承諾が必要です。
+
+このリポジトリでは署名済みIPAを公開配布しません。各自の署名環境を使用し、IPA・署名用資格情報・端末識別情報・開発ビルドのダウンロードリンクを公開ドキュメントへ含めないでください。
 
 ## 8. Wi-Fi経由で開発クライアントを起動する
 
