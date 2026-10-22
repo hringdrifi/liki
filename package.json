@@ -1,7 +1,7 @@
 {
   "name": "liki-mobile",
   "version": "1.0.4",
-  "license": "AGPL-3.0-or-later",
+  "license": "GPL-3.0-or-later",
   "main": "index.ts",
   "dependencies": {
     "@react-native-community/slider": "5.2.1",

@@ -13,7 +13,7 @@ Flutter版は `codex/flutter-faithful-port` / `1987ee2` に保存し、Android�
 - `modules/liki-hid/`: Android HID、権限、公開、ファイル選択、KLE解析と設定保存を持つ独立したローカルExpoモジュール。旧画面・旧アプリへの参照はない。
 - `plugins/with-liki.js`: Bluetooth権限、機能宣言、Androidの画面再生成時の状態保存。
 
-パッケージ名は `jp.liki.pockethid`、versionName/versionCode は `1.0.2` / `3` のまま。ライセンスは AGPL-3.0-or-later。
+パッケージ名は `jp.liki.pockethid`、versionName/versionCode は `1.0.2` / `3` のまま。ライセンスは GPL-3.0-or-later。
 
 ## Windowsでの開発
 

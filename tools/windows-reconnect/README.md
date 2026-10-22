@@ -44,4 +44,4 @@ WindowsのBluetoothアクセスがセキュリティ製品等で制限されて�
 
 参照: [Microsoft: Bluetooth GATT Client](https://learn.microsoft.com/en-us/windows/apps/develop/devices-sensors/gatt-client)
 
-ライセンスはリポジトリのAGPL-3.0-or-laterに従う。
+ライセンスはリポジトリのGPL-3.0-or-laterに従う。

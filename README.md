@@ -114,10 +114,8 @@ npm start -- --lan
 
 端末登録のWebsite方式では、表示URLを対象iPhoneのSafariで開きます。ビルド後はインストールページをiPhoneで開いてインストールします。開発クライアントの起動時は、iPhoneとPCを同じネットワークに接続し、PCのWi-Fi側IPのMetroへ接続してください。キー・マウス入力そのものはBluetoothで送信します。ネイティブコードを変更した場合は再ビルドが必要です。
 
-比較用のFlutter版は `codex/flutter-faithful-port`（`1987ee2`）にあります。実機へのインストール・起動・操作画面の表示まで確認済みです。
-
 Android 12以降ではBluetooth接続・公開の実行時権限を要求します。探索権限や位置情報権限は不要です。
 
 ## ライセンス
 
-本プロジェクトは [GNU AGPL v3.0 or later](LICENSE)（SPDX: `AGPL-3.0-or-later`）で公開しています。GNU Affero GPLバージョン3、または希望によりそれ以降のバージョンを適用できます。配布するAPKに対応するソースコードは、このリポジトリの同じバージョンから取得できます。第三者コードの出典とライセンスは [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) を参照してください。
+本プロジェクトは [GNU GPL v3.0 or later](LICENSE)（SPDX: `GPL-3.0-or-later`）で公開しています。GNU GPLバージョン3、または希望によりそれ以降のバージョンを適用できます。配布するAPKに対応するソースコードは、このリポジトリの同じバージョンから取得できます。第三者コードの出典とライセンスは [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) を参照してください。
