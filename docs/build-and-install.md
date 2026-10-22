@@ -9,8 +9,8 @@
 | Androidで配布版を使う | GitHub Releasesの署名済みAPK | 不要 |
 | Androidでコードを変更して試す | ローカルのdebug APK、またはEASの`development` | 必要 |
 | AndroidでJSを同梱した内部検証用APKを作る | EASの`preview` | 不要 |
-| WindowsからiPhoneで開発する | EASのiOS `development` | 必要 |
 | MacからiPhoneで開発する | Xcodeでローカルビルド、または`npx expo run:ios --device` | 必要 |
+| WindowsからiPhoneで開発する | EASのiOS `development` | 必要 |
 
 独自のHIDネイティブモジュールが必要なため、**Expo Goでは動作しません**。Bluetoothの確認には対応する実機を使います。iOSは16.4以上・arm64、Androidは9以上が対象ですが、Bluetooth機能の対応は[使い方ガイド](usage.md)の条件も確認してください。
 
