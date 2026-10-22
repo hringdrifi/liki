@@ -1,7 +1,7 @@
 module.exports = {
-  name: 'Liki', slug: 'liki', version: '1.0.3', orientation: 'default', userInterfaceStyle: 'dark',
+  name: 'Liki', slug: 'liki', version: '1.0.4', orientation: 'default', userInterfaceStyle: 'dark',
   icon: './artwork/play/store-icon-512.png',
-  android: { package: 'jp.liki.pockethid', versionCode: 4,
+  android: { package: 'jp.liki.pockethid', versionCode: 5,
     adaptiveIcon: { foregroundImage: './artwork/adaptive-icon-foreground.png',
       backgroundImage: './artwork/adaptive-icon-background.png', backgroundColor: '#10151c' } },
   ios: { bundleIdentifier: 'jp.liki.pockethid', supportsTablet: true,

@@ -21,7 +21,10 @@ export function StudioKeyboard({ model, selectedKey, onSelectKey, onSelectLayer 
   }, [layout, viewport]);
   const [, redraw] = useReducer(n => n + 1, 0);
   const layer = layout?.layers[client.layer];
-  if (!layout) return <KeyRain model={model} />;
+  if (!layout) return <View style={{ flex: 1 }}>
+    {!!client.message && <Text style={{ color: colors.text, padding: 12 }}>{client.message}</Text>}
+    <KeyRain model={model} />
+  </View>;
   return <View style={{ flex: 1, padding: 12, gap: 8 }}>
     {layout && geometry && layer && <>
       <ScrollView horizontal style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 8 }}>

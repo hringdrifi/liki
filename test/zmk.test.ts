@@ -74,17 +74,17 @@ test('Studio client reads layout, keymap and metadata without sending mutations'
   const requests: number[] = [];
   client = new StudioClient(async data => {
     const decoded = new StudioFrames().push(data)[0], request = protobuf(decoded), id = request.get(1)![0] as number;
-    const subsystem = request.has(5) ? 5 : 4;
+    const subsystem = request.has(3) ? 3 : request.has(5) ? 5 : 4;
     const payload = protobuf(request.get(subsystem)![0] as Uint8Array), operation = [...payload.keys()][0];
     requests.push(subsystem * 10 + operation);
-    const result = subsystem === 4 ? details : operation === 6 ? physical : keymap;
+    const result = subsystem === 3 ? 1 : subsystem === 4 ? details : operation === 6 ? physical : keymap;
     const reply = frame(f(1, [...f(1, id), ...f(subsystem, f(operation, result))]));
     // Notifications may arrive before the response, fragmented at any boundary.
     client.receive(frame(f(2, f(2, f(1, 1)))));
     for (let i = 0; i < reply.length; i += 3) client.receive(reply.slice(i, i + 3));
   }, () => {});
   await client.load();
-  assert.deepEqual(requests, [56, 51, 42]);
+  assert.deepEqual(requests, [32, 56, 51, 42]);
   assert.equal(client.ready, true); assert.equal(client.layout?.layers[0].keys[0].label, 'A');
   client.reset(); assert.equal(client.layout, undefined);
 });
@@ -100,6 +100,25 @@ test('Studio client reports lock errors and cancels an in-flight read on disconn
   const cancelled = new StudioClient(async () => { writes++; }, () => {});
   const loading = cancelled.load(); cancelled.reset(); await loading;
   assert.equal(writes, 1); assert.equal(cancelled.message, ''); assert.equal(cancelled.layout, undefined);
+});
+
+test('Studio checks the lock before reading and does not treat missing or unknown state as unlocked', async () => {
+  for (const state of [0, undefined, 2]) {
+    const requests: number[] = [];
+    let client: StudioClient;
+    client = new StudioClient(async data => {
+      const request = protobuf(new StudioFrames().push(data)[0]), id = request.get(1)![0] as number;
+      assert.equal(request.has(3), true);
+      assert.equal(protobuf(request.get(3)![0] as Uint8Array).get(2)![0], 1);
+      requests.push(id);
+      client.receive(frame(f(1, [...f(1, id), ...f(3, state === undefined ? [] : f(2, state))])));
+    }, () => {});
+    await client.load();
+    assert.equal(requests.length, 1);
+    assert.equal(client.ready, false);
+    assert.equal(client.layout, undefined);
+    assert.match(client.message, state === 0 ? /ロックを解除/ : /ロック状態を確認できません/);
+  }
 });
 
 test('relay input and Studio events do not replace connection status or persist keystrokes', () => {
@@ -120,8 +139,8 @@ test('Studio timeout distinguishes missing and incomplete responses without assu
   client.receive([0xab, 0x0a, 0x20]);
   t.mock.timers.tick(8000);
   await loading;
-  assert.match(client.message, /物理レイアウト、受信3バイト/);
-  assert.doesNotMatch(client.message, /ロック/);
+  assert.match(client.message, /ロック状態確認、受信3バイト/);
+  assert.doesNotMatch(client.message, /ロックを解除/);
   client.reset();
   const second = client.load();
   t.mock.timers.tick(8000);
@@ -135,10 +154,10 @@ async function editableStudio(respond?: (operation: number, payload: ReturnType<
   let client: StudioClient;
   client = new StudioClient(async data => {
     const request = protobuf(new StudioFrames().push(data)[0]), id = request.get(1)![0] as number;
-    const subsystem = request.has(5) ? 5 : 4, payload = protobuf(request.get(subsystem)![0] as Uint8Array), operation = [...payload.keys()][0];
+    const subsystem = request.has(3) ? 3 : request.has(5) ? 5 : 4, payload = protobuf(request.get(subsystem)![0] as Uint8Array), operation = [...payload.keys()][0];
     if (subsystem === 5 && [2, 3, 4, 5].includes(operation)) writes.push({ operation, payload });
     const custom = subsystem === 5 ? respond?.(operation, payload) : undefined;
-    const response = custom ?? (subsystem === 4 ? f(operation, operation === 1 ? f(1, [1]) : metadata) :
+    const response = custom ?? (subsystem === 3 ? f(2, 1) : subsystem === 4 ? f(operation, operation === 1 ? f(1, [1]) : metadata) :
       operation === 6 ? f(6, physical) : operation === 1 ? f(1, f(1, [...f(1, 9), ...f(2, text('Base')), ...f(3, binding)])) :
       operation === 2 || operation === 3 ? f(operation, 0) : operation === 4 ? f(4, f(1, 1)) : f(5, 1));
     client.receive(frame(f(1, [...f(1, id), ...f(subsystem, response)])));

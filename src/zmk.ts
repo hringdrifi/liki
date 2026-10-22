@@ -176,6 +176,9 @@ export class StudioClient {
     };
     this.message = 'ZMKレイアウトを取得中…'; this.changed();
     try {
+      const lock = child(await request(3, field(2, 1), 'ロック状態確認'), 3);
+      if (!lock.has(2) || ![0, 1].includes(number(lock, 2))) throw Error('Studioのロック状態を確認できません。再取得してください');
+      if (number(lock, 2) === 0) throw Error('キーボードのStudioロックを解除し、再取得してください');
       const physical = physicalLayout(child(child(await request(5, field(6, 1), '物理レイアウト'), 5), 6));
       const keymap = child(child(await request(5, field(1, 1), 'キー割り当て'), 5), 1);
       const layers = children(keymap, 1), details = new Map<number, Message>();
