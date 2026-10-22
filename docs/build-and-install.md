@@ -1,6 +1,6 @@
 # Likiのビルドと導入手順
 
-現在のReact Native / Expo版を対象に、Android APKの導入、WindowsでのAndroid開発ビルド、EASでのiOS開発ビルドを説明します。接続後の操作は[使い方ガイド](usage.md)を参照してください。
+現在のReact Native / Expo版を対象に、Android APKの導入、WindowsでのAndroid開発ビルド、EASでのiOS開発ビルド、MacとXcodeでのiOSローカルビルドを説明します。接続後の操作は[使い方ガイド](usage.md)を参照してください。
 
 ## 1. 使うビルドを選ぶ
 
@@ -10,6 +10,7 @@
 | Androidでコードを変更して試す | ローカルのdebug APK、またはEASの`development` | 必要 |
 | AndroidでJSを同梱した内部検証用APKを作る | EASの`preview` | 不要 |
 | WindowsからiPhoneで開発する | EASのiOS `development` | 必要 |
+| MacからiPhoneで開発する | Xcodeでローカルビルド、または`npx expo run:ios --device` | 必要 |
 
 独自のHIDネイティブモジュールが必要なため、**Expo Goでは動作しません**。Bluetoothの確認には対応する実機を使います。iOSは16.4以上・arm64、Androidは9以上が対象ですが、Bluetooth機能の対応は[使い方ガイド](usage.md)の条件も確認してください。
 
@@ -24,11 +25,22 @@
 
 ## 3. ソースと依存関係を準備する
 
-以降のコマンドはPowerShellを想定します。Git、Node.js 24とnpmを用意し、ソースを取得します。すでにチェックアウト済みの場合はそのリポジトリを使ってください。
+Git、Node.js 24とnpmを用意し、ソースを取得します。すでにチェックアウト済みの場合はそのリポジトリを使ってください。WindowsではPowerShellで実行します。
 
 ```powershell
 git clone https://github.com/hringdrifi/liki.git
 Set-Location liki
+npm ci
+npm run typecheck
+npm run lint
+npm test
+```
+
+Macではターミナル（zsh/bash）で次を実行します。
+
+```sh
+git clone https://github.com/hringdrifi/liki.git
+cd liki
 npm ci
 npm run typecheck
 npm run lint
@@ -154,11 +166,82 @@ npx --yes eas-cli@latest build --platform ios --profile development
 
 このリポジトリでは署名済みIPAを公開配布しません。各自の署名環境を使用し、IPA・署名用資格情報・端末識別情報・開発ビルドのダウンロードリンクを公開ドキュメントへ含めないでください。
 
-## 7. Wi-Fi経由で開発クライアントを起動する
+## 7. MacとXcodeでiOSをローカルビルドする
+
+### Macを準備する
+
+- 使用するExpo / React Nativeと、接続するiPhoneのOSに対応したXcodeをインストールできるMac
+- Xcode本体とiOS開発用のSDK。Command Line ToolsだけではiOSアプリをビルドできません。
+- Git、Node.js 24、npm、CocoaPods。CocoaPods未導入の場合は[公式の導入手順](https://guides.cocoapods.org/using/getting-started.html)を参照してください。
+- 実機用の開発署名を設定できるApple AccountとiPhone
+
+Xcodeを一度起動し、ライセンスと追加コンポーネントの案内を完了します。XcodeのSettings → Locations → Command Line Toolsで、使用するXcodeを選びます。ターミナルで選択状態を確認します。
+
+```sh
+xcode-select -p
+xcodebuild -version
+pod --version
+```
+
+`xcode-select -p`がCommand Line Toolsだけを指している場合は、使用するXcode本体を選択します。標準のインストール先なら次のコマンドを使えます。
+
+```sh
+sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+```
+
+### iOSプロジェクトを生成し、Xcodeで開く
+
+「3. ソースと依存関係を準備する」を済ませた後、Macのリポジトリ直下で実行します。
+
+```sh
+npx expo prebuild --platform ios
+open ios/Liki.xcworkspace
+```
+
+prebuildで`ios/`を生成し、CocoaPodsの依存関係を導入します。失敗した場合はエラーを解決してからXcodeへ進みます。XcodeではPodsを含む **`Liki.xcworkspace`** を開いてください。[Expoのローカルビルド手順](https://docs.expo.dev/guides/local-app-development/)
+
+Swift実装は`modules/liki-hid/ios/`、Podspecは`modules/liki-hid/LikiHid.podspec`にあります。生成した`ios/`だけに恒久的な修正を置かず、アプリ設定やローカルモジュールへ反映します。`prebuild --clean`は生成済みディレクトリを削除して作り直すため、ローカルの編集がある状態で不用意に実行しないでください。
+
+### 署名とiPhoneを設定する
+
+1. XcodeのSettings → Accountsで、自分のApple Accountを追加します。
+2. USBでiPhoneをMacにつなぎ、iPhone側の「このコンピュータを信頼」を承認します。
+3. XcodeでLikiのプロジェクトを選び、アプリターゲットのSigning & Capabilitiesを開きます。
+4. Automatically manage signingを有効にし、自分が使用するTeamを選択します。既存チームの証明書やプロファイルを削除・失効させる必要はありません。
+5. Bundle Identifierが自分の署名環境で使用できるか確認します。既存の`jp.liki.pockethid`を登録できない場合、自分のフォークでは`app.config.js`の`ios.bundleIdentifier`に自分用の識別子を設定し、prebuildを再実行します。識別子を変えると別アプリとして導入されます。
+6. iPhoneの「設定」→「プライバシーとセキュリティ」→「デベロッパモード」をオンにし、再起動後の確認まで完了します。[開発者モードの手順](https://docs.expo.dev/guides/ios-developer-mode/)
+
+Xcodeから接続端末へ直接導入する場合は、前節のEAS用`device:create`は不要です。Xcodeで開発署名を準備します。無料のPersonal Teamには有効期間や利用機能などの制限があり、EASのAd Hoc配布と同じ条件ではありません。
+
+### Xcodeから実機へ導入する
+
+1. Xcode上部のSchemeでLikiを選び、実行先を接続したiPhoneにします。
+2. Macのリポジトリ直下でMetroを起動します。
+
+   ```sh
+   npm start -- --lan --port 8081
+   ```
+
+3. XcodeのRun（▶、またはCmd+R）でビルド・インストール・起動します。署名エラーはSigning & Capabilitiesの表示を確認します。
+4. iPhoneで要求された場合は「設定」→「一般」→「VPNとデバイス管理」で自分の開発者を信頼します。
+5. Likiの開発クライアントからMacのMetroへ接続します。MacとiPhoneを同じネットワークに置き、接続先にはMacのWi-Fi側IPv4を使います。USB接続だけでMetroへ到達できるとは限りません。
+6. Bluetooth権限を許可し、PC側からLikiへ接続して入力を確認します。
+
+署名設定後は、XcodeのRunの代わりにターミナルからも実行できます。
+
+```sh
+npx expo run:ios --device
+```
+
+接続したiPhoneを選ぶと、ビルド・インストールとMetroの起動を行います。Metroがすでに動いている場合は既存サーバーを使用します。[Expo CLIの実機ビルドと署名](https://docs.expo.dev/more/expo-cli/#compiling-ios)
+
+シミュレーターは画面の確認に使えますが、Bluetooth HIDの実機検証の代わりにはなりません。この文書のMacローカル手順は公式手順とリポジトリ設定を照合したもので、このWindows環境からMacでのビルド実行は検証していません。
+
+## 8. Wi-Fi経由で開発クライアントを起動する
 
 Android・iOS共通です。スマホと開発PCを同じネットワークへ接続し、PCの**Wi-Fi側のIPv4アドレス**を確認します。有線LAN・VPNなど別のアダプターのアドレスと取り違えないようにします。
 
-リポジトリ直下で実行します。
+Windowsでは、リポジトリ直下のPowerShellで実行します。
 
 ```powershell
 $env:NODE_OPTIONS = '--dns-result-order=ipv4first'
@@ -166,9 +249,17 @@ $env:REACT_NATIVE_PACKAGER_HOSTNAME = '<PCのWi-Fi側IPv4>'
 npm start -- --lan --port 8081
 ```
 
+Macでは、リポジトリ直下のターミナルで実行します。
+
+```sh
+export NODE_OPTIONS='--dns-result-order=ipv4first'
+export REACT_NATIVE_PACKAGER_HOSTNAME='<MacのWi-Fi側IPv4>'
+npm start -- --lan --port 8081
+```
+
 Likiの開発クライアントで`http://<PCのWi-Fi側IPv4>:8081`を開きます。読み込めない場合はネットワーク間の隔離や、ファイアウォールのNode.jsへのTCP受信・ローカルポート8081の許可を確認します。必要な許可はスマホからの接続に限定し、ファイアウォール全体を無効にしないでください。
 
-## 8. 変更後に必要な作業
+## 9. 変更後に必要な作業
 
 | 変更した内容 | 反映方法 |
 | --- | --- |
@@ -179,7 +270,7 @@ Likiの開発クライアントで`http://<PCのWi-Fi側IPv4>:8081`を開きま�
 
 バージョンは`app.config.js`と`package.json`・`package-lock.json`で管理します。Androidリリース時は`versionCode`も増やします。この手順は開発・内部検証用の導入を対象とし、ストア公開やGitHub Releaseの作成は含みません。
 
-## 9. 実機で確認する
+## 10. 実機で確認する
 
 ビルド成功、インストール成功、Bluetooth入力成功は別々に確認します。
 
@@ -196,4 +287,7 @@ Android BLEの再起動後の再接続とiOSの一部入力には未解決・未
 
 - [Expo: Development builds](https://docs.expo.dev/develop/development-builds/introduction/)
 - [Expo: Internal distribution](https://docs.expo.dev/build/internal-distribution/)
+- [Expo: ローカルビルド](https://docs.expo.dev/guides/local-app-development/)
+- [Expo CLI: iOSのビルドと開発署名](https://docs.expo.dev/more/expo-cli/#compiling-ios)
+- [Expo: iOS Developer Mode](https://docs.expo.dev/guides/ios-developer-mode/)
 - [Expo移植メモと過去の検証記録](expo-port.md)
