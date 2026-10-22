@@ -8,6 +8,8 @@ Androidでは未接続画面からBluetooth LE（BLE）とBluetooth Classicを�
 
 ## ダウンロード
 
+操作を順に確認するには[使い方ガイド](docs/usage.md)、開発環境の準備と実機へのインストールには[ビルドと導入手順](docs/build-and-install.md)を参照してください。
+
 [GitHub Releases](https://github.com/hringdrifi/liki/releases) でAndroid用の署名済みAPKと対応ソースを公開します。配布APKはJavaScriptを同梱しており、開発サーバーなしで起動できます。署名付きIPAは配布しません。iOSは各自のApple Developerアカウントと署名環境でビルドしてください。
 
 v1.0.3から現在のExpo版へ移行しています。旧Android版・Flutter版の設定や保存レイアウトは引き継がず、初期設定から開始します。Expo版で保存した設定とレイアウトは次回起動時にも復元されます。
