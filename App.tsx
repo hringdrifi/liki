@@ -23,6 +23,7 @@ function Liki() {
   const insets = useSafeAreaInsets();
   const model = useRef(new LikiModel(backend)).current, [, render] = useState(0);
   const [menu, setMenu] = useState(false), [dialog, setDialog] = useState<Dialog | null>(null);
+  const dialogCompletion = useRef<(() => void) | null>(null);
   const menuStart = useRef({ x: 0, y: 0 });
   const error = (e: unknown) => Alert.alert('Liki', String(e));
   const run = (work: () => Promise<any>) => { void work().catch(error); };
@@ -48,7 +49,19 @@ function Liki() {
     [{ text: 'キャンセル', style: 'cancel', onPress: () => resolve(false) }, { text: '確定', onPress: () => resolve(true) }],
     { cancelable: true, onDismiss: () => resolve(false) }));
   const privacy = () => Alert.alert('プライバシーポリシー', model.privacy);
-  const closeDialog = () => { dialog?.resolve(null); setDialog(null); };
+  const finishDialog = (complete: () => void) => {
+    if (Platform.OS === 'ios') {
+      if (dialogCompletion.current) return;
+      // UIKit must finish dismissing this modal before presenting the file picker.
+      dialogCompletion.current = complete;
+      setDialog(null);
+    } else { setDialog(null); complete(); }
+  };
+  const onDialogDismissed = () => {
+    const complete = dialogCompletion.current; dialogCompletion.current = null;
+    complete?.();
+  };
+  const closeDialog = () => { if (dialog) finishDialog(() => dialog.resolve(null)); };
   const action = (work: () => Promise<any>) => { setMenu(false); run(work); };
   const saveLayout = async () => {
     const name = await prompt('レイアウトに名前を付けて保存', model.selectedName ?? '', s => s.trim().length > 0 && s.trim().length <= 40);
@@ -94,8 +107,8 @@ function Liki() {
     const options = model.options.filter(b => bindingInCategory(b, i));
     const at = await choose(names[i], options.map(b => b.name)); if (at !== null) await model.assign(key, options[at].name);
   };
-  const sharedEffect = model.trackpadPanelEnabled && !model.editing && model.relayMode && !model.showKeyboardEffect;
-  const controls = model.relayMode ? <StudioKeyboard model={model} showEffect={!sharedEffect} /> : <View style={{ flex: 1 }}>
+  const sharedEffect = model.trackpadPanelEnabled && !model.editing && !model.virtualKeyboardEnabled && !model.showKeyboardEffect;
+  const controls = !model.virtualKeyboardEnabled ? <StudioKeyboard model={model} showEffect={!sharedEffect} /> : <View style={{ flex: 1 }}>
     <View style={{ flex: 1, padding: 8 }}>
       {model.editing && <><View style={{ flexDirection: 'row' }}>{[0, 1, 2, 3].map(i => <View style={{ flex: 1, opacity: i === model.editLayer ? 1 : .55 }} key={i}>
         <Button title={`レイヤー ${i}`} onPress={() => { model.editLayer = i; model.changed(); }} /></View>)}</View>
@@ -104,7 +117,7 @@ function Liki() {
       {model.geometry && <Keyboard model={model} onEdit={key => run(() => editBinding(key))} />}
     </View>
     {!model.editing && <View pointerEvents="none" style={{ position: 'absolute', top: 12, left: 12, backgroundColor: colors.surface, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
-      <Text accessibilityLabel={`現在のレイヤー ${model.layer}`} style={[styles.text, { fontSize: 12, fontWeight: 'bold' }]}>L{model.layer}{model.oneShotReturn !== undefined ? '・1回' : ''}</Text></View>}
+      <Text accessibilityLabel={`現在のレイヤー ${model.layer}${model.syncedLayer !== undefined ? ' ZMK同期中' : ''}`} style={[styles.text, { fontSize: 12, fontWeight: 'bold' }]}>{model.syncedLayer !== undefined ? 'ZMK同期 ' : ''}L{model.layer}{model.oneShotReturn !== undefined ? '・1回' : ''}</Text></View>}
   </View>;
   const controlScreen = model.trackpadPanelEnabled && !model.editing ? <View style={{ flex: 1 }}>
     {sharedEffect && <View pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
@@ -167,30 +180,33 @@ function Liki() {
       <ScrollView contentContainerStyle={{ padding: 12 }}>
         <Text style={[styles.text, { fontSize: 24, fontWeight: 'bold', padding: 12 }]}>Liki</Text>
         <Section title="入力方法" />
-        {([[true, '外部キーボード・マウス'], [false, '仮想キーボード・タッチパッド']] as const).filter(([relay]) => !relay || model.status.relaySupported !== false).map(([relay, title]) =>
-          <Pressable key={title} accessibilityRole="radio" accessibilityLabel={title} accessibilityState={{ checked: model.relayMode === relay }}
-            onPress={() => { if (model.relayMode === relay) setMenu(false); else action(() => model.setRelayMode(relay)); }}
-            style={[styles.button, { alignItems: 'flex-start', paddingHorizontal: 12 }, model.relayMode === relay && { backgroundColor: '#24736d' }]}>
-            <Text style={[styles.buttonText, { color: model.relayMode === relay ? colors.text : colors.accent }]}>{model.relayMode === relay ? '●' : '○'} {title}</Text>
+        {([[true, false, '外部キーボード・マウス'], [false, true, '仮想キーボード・タッチパッド'], [true, true, '外部＋仮想キーボード']] as const).filter(([relay]) => !relay || model.status.relaySupported !== false).map(([relay, virtual, title]) =>
+          <Pressable key={title} accessibilityRole="radio" accessibilityLabel={title} accessibilityState={{ checked: model.relayMode === relay && model.virtualKeyboardEnabled === virtual }}
+            onPress={() => { if (model.relayMode === relay && model.virtualKeyboardEnabled === virtual) setMenu(false); else action(() => model.setRelayMode(relay, virtual)); }}
+            style={[styles.button, { alignItems: 'flex-start', paddingHorizontal: 12 }, model.relayMode === relay && model.virtualKeyboardEnabled === virtual && { backgroundColor: '#24736d' }]}>
+            <Text style={[styles.buttonText, { color: model.relayMode === relay && model.virtualKeyboardEnabled === virtual ? colors.text : colors.accent }]}>{model.relayMode === relay && model.virtualKeyboardEnabled === virtual ? '●' : '○'} {title}</Text>
           </Pressable>)}
-        {model.relayMode ? <><Section title="外部機器" />
+        {model.relayMode && <><Section title="外部機器" />
           <Text style={[styles.text, { padding: 12 }]}>接続された入力デバイス</Text>
           {model.status.keyboards?.length ? model.status.keyboards.map((device: { id: string | number; name: string }) =>
             <Text style={[styles.text, { paddingHorizontal: 12, paddingBottom: 8 }]} key={device.id}>● {device.name}</Text>) :
             <Text style={[styles.muted, { paddingHorizontal: 12, paddingBottom: 8 }]}>接続された入力デバイスはありません</Text>}
           {model.isZmkKeyboard && !!model.studio.message && <Text style={[styles.muted, { padding: 12 }]}>{model.studio.message}</Text>}
-          <Text style={[styles.muted, { padding: 12 }]}>ZMKレイヤー: {model.studio.activeLayer === undefined ? model.zmkLayerMessage || '未取得' : `L${model.studio.activeLayer}`}</Text>
-          <Button align="left" title="ZMKレイヤー連携を再接続" onPress={() => action(() => model.call('zmkLayerRetry'))} />
-          <Button align="left" title="キー割り当てを編集" onPress={() => { try { model.beginExternalEdit(); setMenu(false); } catch (reason) { error(reason); } }} />
+          {model.zmkLayerSupported && <>
+            {model.studio.activeLayer !== undefined && <Text style={[styles.muted, { padding: 12 }]}>ZMKレイヤー: L{model.studio.activeLayer}</Text>}
+            <Button align="left" title="ZMKレイヤー連携を再接続" onPress={() => action(() => model.call('zmkLayerRetry'))} />
+          </>}
+          <Button align="left" title="外部キーボードの割り当てを編集" onPress={() => { try { model.beginExternalEdit(); setMenu(false); } catch (reason) { error(reason); } }} />
           <Button align="left" title={`配列変換: ${{ none: '変換なし', 'us-jis': 'US → JIS', 'jis-us': 'JIS → US' }[model.relayLayout]}`} onPress={() => action(async () => {
             const index = await choose('配列変換（外部キーボード → 接続先の配列）', ['変換なし', 'US → JIS', 'JIS → US']);
             if (index !== null) await model.setRelayLayout(['none', 'us-jis', 'jis-us'][index]);
           })} />
-          {model.isZmkKeyboard && <Button align="left" title="ZMKレイアウトを再取得" onPress={() => action(() => model.call('studioRetry'))} />}</> : <>
+          {model.isZmkKeyboard && <Button align="left" title="ZMKレイアウトを再取得" onPress={() => action(() => model.call('studioRetry'))} />}</>}
+        {model.virtualKeyboardEnabled && <>
           <Section title="レイアウト" />
           {model.selectedName && <Text style={styles.text}>保存: {model.selectedName}</Text>}
           <Button align="left" title="レイアウトを選択" onPress={() => action(chooseLayout)} />
-          <Button align="left" title="キー割り当てを編集" onPress={() => { setMenu(false); model.beginEdit(); }} />
+          <Button align="left" title="仮想キーボードの割り当てを編集" onPress={() => { setMenu(false); model.beginEdit(); }} />
           <Button align="left" title="現在のレイアウトを保存" onPress={() => action(saveLayout)} />
           <Button align="left" title="保存したレイアウトを削除" disabled={!model.saved.length} onPress={() => action(deleteLayout)} />
         </>}
@@ -198,12 +214,12 @@ function Liki() {
         <Section title="共通" />
         <Button align="left" title="設定" onPress={() => { setMenu(false); model.settingsVisible = true; model.syncPage(); model.changed(); }} />
         <Button align="left" title="PCとの接続を切断" onPress={() => action(() => model.call('disconnect'))} /></ScrollView></SafeAreaView></View>}
-    <Modal visible={!!dialog} transparent animationType="fade" onRequestClose={closeDialog}>
+    <Modal visible={!!dialog} transparent animationType="fade" onRequestClose={closeDialog} onDismiss={onDialogDismissed}>
       <View style={{ flex: 1, justifyContent: 'center', backgroundColor: '#00000099', padding: 24 }}><View style={{ backgroundColor: colors.surface, maxHeight: '85%', borderRadius: 12, padding: 16 }}>
         <Text style={[styles.text, { fontWeight: 'bold', fontSize: 20, marginBottom: 12 }]}>{dialog?.title}</Text>
-        {dialog && 'items' in dialog ? <ScrollView>{dialog.items.map((s, i) => <Button key={i} title={s} onPress={() => { setDialog(null); dialog.resolve(i); }} />)}</ScrollView> :
+        {dialog && 'items' in dialog ? <ScrollView>{dialog.items.map((s, i) => <Button key={i} title={s} onPress={() => finishDialog(() => dialog.resolve(i))} />)}</ScrollView> :
           dialog && 'text' in dialog ? <><TextInput autoFocus value={dialog.text} onChangeText={text => setDialog({ ...dialog, text })} style={[styles.text, { borderWidth: 1, borderColor: colors.muted, padding: 10 }]} />
-            <Button title="保存" disabled={!dialog.validate(dialog.text.trim())} onPress={() => { setDialog(null); dialog.resolve(dialog.text.trim()); }} /></> : null}
+            <Button title="保存" disabled={!dialog.validate(dialog.text.trim())} onPress={() => finishDialog(() => dialog.resolve(dialog.text.trim()))} /></> : null}
         <Button title="閉じる" onPress={closeDialog} /></View></View>
     </Modal>
   </SafeAreaView>;

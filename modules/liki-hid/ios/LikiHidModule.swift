@@ -53,6 +53,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
     private var pickerPromise: Promise?
     private var session: String?
     private var buttons = 0
+    private var inputState = HidInputState()
     private var generation = 0
     private var nextKeyTime = Date.distantPast
     private var pendingX = 0, pendingY = 0
@@ -82,7 +83,8 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
             self.emit(["relayInput": ["pressed": keys + (0..<8).filter { modifiers & (1 << $0) != 0 }.map { 0xe0 + $0 }, "consumer": 0]])
             if self.connected && !self.relayLearning {
                 let mapped = KeyboardRemapper.translate(modifiers: modifiers, keys: keys, rules: self.studioConnected || !self.relayRemapEnabled ? [:] : self.relayRemaps, layout: self.relayLayout)
-                self.hid.sendKeyboard(modifiers: mapped.modifiers, codes: mapped.keys); self.hid.sendConsumer(usage: mapped.consumer)
+                self.inputState.physicalModifiers = mapped.modifiers; self.inputState.physicalKeys = mapped.keys
+                self.inputState.physicalConsumer = mapped.consumer; self.sendKeyboard(); self.sendConsumer()
             }
         }, changed: { [weak self] in
             guard let self else { return }; self.publish()
@@ -95,7 +97,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         },
         send: { [weak self] buttons, x, y, wheel in
             guard let self, self.connected else { return }
-            if self.buttons != buttons { self.flushMouse(); self.buttons = buttons; self.mouse(0, 0, 0) }
+            if self.inputState.physicalButtons != buttons { self.flushMouse(); self.inputState.physicalButtons = buttons; self.mouse(0, 0, 0) }
             if x != 0 || y != 0 { self.move(x, y) }
             if wheel != 0 { self.flushMouse(); self.mouse(0, 0, wheel) }
         }, changed: { [weak self] in self?.publish() })
@@ -223,13 +225,13 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         case "connect": throw NSError(domain: "Liki", code: 2, userInfo: [NSLocalizedDescriptionKey: "PCのBluetooth設定からLikiに接続してください"])
         case "disconnect", "cancelConnection":
             releaseInputs(); hid.disconnect(); central?.delegate = nil; central = nil; isStarting = false; publish()
-        case "key": sequence { self.hid.sendKeyboard(modifiers: int("modifiers"), code: int("code")) }
-        case "consumer": sequence { self.hid.sendConsumer(usage: int("usage")) }
+        case "key": sequence { self.inputState.virtualModifiers = int("modifiers"); self.inputState.virtualCode = int("code"); self.sendKeyboard() }
+        case "consumer": sequence { self.inputState.virtualConsumer = int("usage"); self.sendConsumer() }
         case "move": move(int("x"), int("y"))
         case "scroll": flushMouse(); mouse(0, 0, int("amount"))
         case "zoom":
             flushMouse()
-            sequence { self.hid.sendKeyboard(modifiers: 1, code: 0); self.mouse(0, 0, int("amount")) }
+            sequence { self.inputState.virtualModifiers = 1; self.sendKeyboard(); self.mouse(0, 0, int("amount")) }
         case "mouseDown": flushMouse(); buttons |= int("button"); mouse(0, 0, 0)
         case "mouseUp": flushMouse(); buttons &= ~int("button"); mouse(0, 0, 0)
         case "click":
@@ -282,6 +284,11 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         }
         publish()
     }
+    private func sendKeyboard() {
+        let report = inputState.keyboard
+        hid.sendKeyboard(modifiers: report.modifiers, codes: report.codes)
+    }
+    private func sendConsumer() { hid.sendConsumer(usage: inputState.consumer) }
     private func sequence(_ press: @escaping () -> Void) {
         guard connected else { return }
         let token = generation, when = max(Date(), nextKeyTime)
@@ -291,7 +298,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0, when.timeIntervalSinceNow) + 0.018) { [weak self] in
             guard let self, self.generation == token, self.connected else { return }
-            self.hid.sendKeyboard(modifiers: 0, code: 0); self.hid.sendConsumer(usage: 0)
+            self.inputState.clearVirtual(); self.sendKeyboard(); self.sendConsumer()
         }
     }
     private func move(_ x: Int, _ y: Int) {
@@ -315,7 +322,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         var x = x, y = y, wheel = wheel
         repeat {
             let dx = max(-127, min(127, x)), dy = max(-127, min(127, y)), dw = max(-127, min(127, wheel))
-            hid.sendMouse(MouseReport(buttons: MouseButtons(rawValue: UInt8(buttons & 7)), dX: Int8(dx), dY: Int8(dy), wheel: Int8(dw)))
+            hid.sendMouse(MouseReport(buttons: MouseButtons(rawValue: UInt8((buttons | inputState.physicalButtons) & 7)), dX: Int8(dx), dY: Int8(dy), wheel: Int8(dw)))
             x -= dx; y -= dy; wheel -= dw
         } while x != 0 || y != 0 || wheel != 0
     }
@@ -323,6 +330,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         relay.clear()
         mouseRelay.clear()
         generation += 1; nextKeyTime = .distantPast; mouseWork?.cancel(); mouseWork = nil; pendingX = 0; pendingY = 0; buttons = 0
+        inputState.clear()
         hid.sendKeyboard(modifiers: 0, code: 0); hid.sendConsumer(usage: 0); hid.sendMouse(.zero)
     }
     private func applyWindowSettings() {

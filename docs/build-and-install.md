@@ -11,6 +11,7 @@
 | AndroidでJSを同梱した内部検証用APKを作る | EASの`preview` | 不要 |
 | MacからiPhoneで開発する | Xcodeでローカルビルド、または`npx expo run:ios --device` | 必要 |
 | WindowsからiPhoneで開発する | EASのiOS `development` | 必要 |
+| iPhoneでサーバー不要の内部検証版を使う | EASのiOS `preview` | 不要 |
 
 独自のHIDネイティブモジュールが必要なため、**Expo Goでは動作しません**。Bluetoothの確認には対応する実機を使います。iOSは16.4以上・arm64、Androidは9以上が対象ですが、Bluetooth機能の対応は[使い方ガイド](usage.md)の条件も確認してください。
 
@@ -221,7 +222,7 @@ npx expo run:ios --device
 
 シミュレーターは画面の確認に使えますが、Bluetooth HIDの実機検証の代わりにはなりません。この文書のMacローカル手順は公式手順とリポジトリ設定を照合したもので、このWindows環境からMacでのビルド実行は検証していません。
 
-## 7. WindowsからiOS開発ビルドを作る
+## 7. WindowsからiOSビルドを作る
 
 WindowsではiOSのネイティブビルドをローカル実行せず、EAS Buildを使います。Expoアカウント、Apple Developerの署名環境、実機iPhoneが必要です。
 
@@ -237,11 +238,21 @@ npx --yes eas-cli@latest device:create
 
 ### ビルドして導入する
 
+普段使いやMetroなしの実機確認には、JavaScriptを同梱する`preview`を選びます。
+
+```powershell
+npx --yes eas-cli@latest build --platform ios --profile preview
+```
+
+`preview`は起動・使用時にPCやMetroを必要としません。JS/TSだけの変更でも、新しいビルドを作って上書きインストールします。App Storeへの公開ではなく、登録済み端末向けの内部配布です。
+
+画面や操作ロジックをMetroのリロードで更新しながら開発する場合は、`development`を選びます。
+
 ```powershell
 npx --yes eas-cli@latest build --platform ios --profile development
 ```
 
-`development`はAd Hocによる内部配布用の開発ビルドです。ビルド時のプロビジョニングプロファイルに含まれる端末だけにインストールできます。新しい端末を登録した場合は、プロファイルを更新して再ビルドします。
+`development`はAd Hocによる内部配布用の開発ビルドで、起動・リロード時にMetroへ接続します。`preview`と`development`はいずれも、ビルド時のプロビジョニングプロファイルに含まれる端末だけにインストールできます。新しい端末を登録した場合は、プロファイルを更新して再ビルドします。
 
 ビルド完了後、インストールページを対象iPhoneのSafariで開き、Installを押します。iOSに要求された場合は開発者モードを有効にし、画面の案内に従います。Appleの利用規約更新によって処理が止まった場合は、Account Holderによる確認・承諾が必要です。
 
@@ -276,7 +287,7 @@ Likiの開発クライアントで`http://<PCのWi-Fi側IPv4>:8081`を開きま�
 | JS/TSの画面や操作ロジック | Metroの再読み込み |
 | Kotlin・Swift・ネイティブ依存関係 | ネイティブアプリを再ビルドして上書きインストール |
 | config plugin・権限・Info.plistなど | ネイティブ設定の再生成と再ビルド・上書きインストール |
-| JS同梱の配布・preview APK | JS変更も含めてAPKを再ビルド |
+| JS同梱の配布APK・preview APK/IPA | JS変更も含めてアプリを再ビルド・再インストール |
 
 バージョンは`app.config.js`と`package.json`・`package-lock.json`で管理します。Androidリリース時は`versionCode`も増やします。この手順は開発・内部検証用の導入を対象とし、ストア公開やGitHub Releaseの作成は含みません。
 

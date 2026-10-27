@@ -13,6 +13,23 @@ const binding = [...f(1, 2), ...f(2, 0x70004)];
 const details = [...f(1, 1), ...f(2, text('Key Press')), ...f(3, f(1, f(5, [])))];
 const keymap = f(1, [...f(1, 0), ...f(2, text('Base')), ...f(3, binding)]);
 
+test('Liki service support is independent of layer reads and is reset for other devices', () => {
+  const model = new LikiModel({ invoke: async () => {}, subscribe: () => ({ remove() {} }) });
+  assert.equal(model.zmkLayerSupported, false);
+  model.acceptStatus({ zmkLayer: { supported: true, bytes: null } });
+  assert.equal(model.zmkLayerSupported, true);
+  assert.equal(model.studio.activeLayer, undefined);
+  model.acceptStatus({ zmkLayer: { supported: true, bytes: [1, 2] } });
+  model.acceptStatus({ zmkLayer: { supported: true, bytes: null, message: 'read failed' } });
+  assert.equal(model.zmkLayerSupported, true);
+  assert.equal(model.studio.activeLayer, undefined);
+  model.acceptStatus({ zmkLayer: { supported: true, bytes: [2, 2] } });
+  assert.equal(model.zmkLayerSupported, true);
+  assert.equal(model.studio.activeLayer, undefined);
+  model.acceptStatus({ zmkLayer: { supported: false, bytes: null } });
+  assert.equal(model.zmkLayerSupported, false);
+});
+
 test('Liki layer notifications work without Studio and survive Studio disconnects', () => {
   const calls: string[] = [];
   const model = new LikiModel({ invoke: async method => { calls.push(method); }, subscribe: () => ({ remove() {} }) });
@@ -49,6 +66,7 @@ test('Liki rejects malformed or future layer payloads without claiming layer zer
 
 test('Liki follows layer order rather than Studio IDs and keeps editing selection separate', async () => {
   const model = new LikiModel({ invoke: async () => {}, subscribe: () => ({ remove() {} }) });
+  model.relayMode = true;
   const key = { label: 'A', usages: [0x70004] }, b = { behaviorId: 1, param1: 0x70004, param2: 0 };
   model.studio.layout = { ...physicalLayout(msg(physical)), layers: [
     { id: 9, name: 'Base', keys: [key], bindings: [b] },
@@ -64,6 +82,13 @@ test('Liki follows layer order rather than Studio IDs and keeps editing selectio
   model.acceptStatus({ zmkLayer: { bytes: [1, 0] } });
   assert.equal(model.studio.activeLayer, 0);
   await model.setRelayEffect('keyboard');
+  assert.equal(model.showKeyboardEffect, true);
+  model.status.relaySupported = true;
+  await model.setRelayMode(true, true);
+  assert.equal(model.virtualKeyboardEnabled, true);
+  assert.equal(model.showKeyboardEffect, false);
+  assert.equal(model.studio.layout.layers.length, 2);
+  await model.setRelayMode(true);
   assert.equal(model.showKeyboardEffect, true);
   model.acceptStatus({ zmkLayer: { bytes: [1, 5] } });
   assert.equal(model.showKeyboardEffect, false); // Never label an unrelated layout as layer 5.

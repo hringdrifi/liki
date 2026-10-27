@@ -16,14 +16,17 @@ internal class LikiLayerTransport(private val context: Context, private val emit
     private val cccId = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     private var enabled = false
     private var gatt: BluetoothGatt? = null
+    private var targetAddress: String? = null
+    private var supported = false
     private val timeout = Runnable { fail("ZMKレイヤー連携がタイムアウトしました") }
     private val reconnect = Runnable { if (enabled) find() }
     private fun state(message: String = "", bytes: ByteArray? = null) {
-        emit(mapOf("zmkLayer" to mapOf("message" to message, "bytes" to bytes?.map { it.toInt() and 255 })))
+        emit(mapOf("zmkLayer" to mapOf("supported" to supported, "message" to message, "bytes" to bytes?.map { it.toInt() and 255 })))
     }
     fun enable(value: Boolean) {
         if (enabled == value) return
         enabled = value
+        supported = false; targetAddress = null
         disconnect(); state()
         if (value) find()
     }
@@ -47,6 +50,7 @@ internal class LikiLayerTransport(private val context: Context, private val emit
                 .filter { device -> device.type != BluetoothDevice.DEVICE_TYPE_CLASSIC && names.any { matchesStudioKeyboardName(it, device.name) } }
             val target = devices.singleOrNull()
             if (gatt != null && gatt?.device?.address == target?.address) return
+            if (targetAddress != target?.address) { supported = false; targetAddress = target?.address }
             disconnect(); state()
             if (target == null) { fail(if (devices.isEmpty()) "接続済みのBLEキーボードがありません" else "BLEキーボードを1台だけ接続してください"); return }
             gatt = target.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
@@ -62,10 +66,12 @@ internal class LikiLayerTransport(private val context: Context, private val emit
         }
         @Suppress("DEPRECATION")
         override fun onServicesDiscovered(source: BluetoothGatt, status: Int) = current(source) {
-            val layer = source.getService(serviceId)?.getCharacteristic(layerId)
+            val service = source.getService(serviceId)
+            val layer = service?.getCharacteristic(layerId)
             val ccc = layer?.getDescriptor(cccId)
             if (status != BluetoothGatt.GATT_SUCCESS) { fail("ZMKレイヤーサービスを取得できません"); return@current }
-            if (layer == null || ccc == null) { fail("ファームにzmk-feature-likiが必要です", retry = false); return@current }
+            supported = service != null; state()
+            if (layer == null || ccc == null) { fail("ZMKレイヤー通知を取得できません", retry = false); return@current }
             if (!source.setCharacteristicNotification(layer, true)) { fail("ZMKレイヤー通知を開始できません"); return@current }
             ccc.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
             if (!source.writeDescriptor(ccc)) fail("ZMKレイヤー通知を開始できません")
@@ -89,5 +95,5 @@ internal class LikiLayerTransport(private val context: Context, private val emit
             current(source) { if (characteristic.uuid == layerId) state(bytes = bytes) }
         }
     }
-    fun close() { enabled = false; disconnect(); state() }
+    fun close() { enabled = false; supported = false; targetAddress = null; disconnect(); state() }
 }

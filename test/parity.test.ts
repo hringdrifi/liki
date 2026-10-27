@@ -256,13 +256,52 @@ test('relay mode rejects an old native build and survives a cancelled or invalid
   await assert.rejects(m.applyLayout('invalid')); assert.equal(m.relayMode, true);
 });
 
-test('choosing an ordinary or saved layout ends relay mode', async () => {
+test('choosing an ordinary or saved layout enables virtual input while preserving relay', async () => {
   const { m, sent } = await fixture(); m.status.relaySupported = true; m.showingControls = true;
   await m.saveLayout('Previous'); const previous = m.saved[0];
   await m.setRelayMode(true); await m.applyLayout('fixture');
-  assert.equal(m.relayMode, false); assert.equal(sent('page').at(-1)?.relay, false);
+  assert.equal(m.relayMode, true); assert.equal(m.virtualKeyboardEnabled, true); assert.equal(sent('page').at(-1)?.relay, true);
   await m.setRelayMode(true); await m.restoreLayout(previous);
-  assert.equal(m.relayMode, false); assert.equal(m.selectedName, 'Previous');
+  assert.equal(m.relayMode, true); assert.equal(m.virtualKeyboardEnabled, true); assert.equal(m.selectedName, 'Previous');
+});
+
+test('combined input persists, forwards physical input, and keeps virtual edits separate', async () => {
+  const { m, sent, preferences } = await fixture();
+  m.status = { relaySupported: true }; m.showingControls = true;
+  await m.setRelayMode(true, true);
+  assert.equal(m.relayMode, true); assert.equal(m.virtualKeyboardEnabled, true);
+  assert.equal(preferences.relay_virtual_keyboard, 'true');
+  assert.equal(sent('page').at(-1)?.relay, true);
+  m.acceptStatus({ relayInput: { pressed: [0xe0, 5], consumer: 0 } });
+  await m.tap(m.keys[0]);
+  assert.deepEqual(sent('key').at(-1), { modifiers: 0, code: 4 });
+  assert.deepEqual(m.relayPressed, [0xe0, 5]);
+  m.beginEdit(); assert.equal(sent('page').at(-1)?.relay, false);
+  await m.endEdit(false); assert.equal(sent('page').at(-1)?.relay, true);
+  await m.setRelayMode(true);
+  assert.equal(m.virtualKeyboardEnabled, false); assert.equal(preferences.relay_virtual_keyboard, null);
+  await m.setRelayMode(false);
+  assert.equal(m.virtualKeyboardEnabled, true); assert.equal(sent('page').at(-1)?.relay, false);
+});
+
+test('combined input follows ZMK layers without Studio and releases local layer control on disconnect', async () => {
+  const { m, sent } = await fixture(); m.status.relaySupported = true; m.showingControls = true;
+  m.layers[1] = { 0: 'B' }; m.layers[2] = { 0: 'A' };
+  m.acceptStatus({ zmkLayer: { supported: true, bytes: [1, 1] } });
+  await m.setRelayMode(true, true);
+  assert.equal(m.layer, 1); assert.equal(m.syncedLayer, 1); assert.equal(m.studio.layout, undefined);
+  await m.tap(m.keys[0]); assert.equal(sent('key').at(-1)?.code, 5);
+  m.acceptStatus({ zmkLayer: { supported: true, bytes: [1, 2] } });
+  assert.equal(m.layer, 2);
+  await m.tap(m.keys[0], 1); assert.equal(sent('key').at(-1)?.code, 4);
+  m.overrides[1] = 'toggle3'; await m.tap(m.keys[1]); assert.equal(m.layer, 2);
+  m.overrides[1] = 'hold3'; m.momentaryDown(m.keys[1]); assert.equal(m.layer, 2);
+  m.acceptStatus({ zmkLayer: { supported: true, bytes: [1, 7] } });
+  assert.equal(m.layer, 7); assert.equal(m.trackpadBorderColor, 0x657789);
+  await m.tap(m.keys[0]); assert.equal(sent('key').at(-1)?.code, 4); // Unconfigured layers inherit base bindings.
+  m.acceptStatus({ zmkLayer: { supported: true, bytes: null } });
+  assert.equal(m.syncedLayer, undefined);
+  m.overrides[1] = 'toggle3'; await m.tap(m.keys[1]); assert.equal(m.layer, 3);
 });
 test('layout replacement and restore remain visible without another viewport event', async () => {
   const { m } = await fixture();

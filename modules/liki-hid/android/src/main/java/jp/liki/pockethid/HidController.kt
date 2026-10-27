@@ -20,11 +20,12 @@ internal class HidController(private val context: Context, private val settings:
     private val hid = BleHidPeripheral(context) { message -> if (transport == "ble") transportStatus(message) }
     private val classic = ClassicHidPeripheral(context) { message -> if (transport == "classic") transportStatus(message) }
     private fun transportStatus(message: String) {
-        if (!isConnected()) { keyHandler.removeCallbacksAndMessages(null); nextKeyTime = 0; mouseButtons = 0; clearMouseMove() }
+        if (!isConnected()) { keyHandler.removeCallbacksAndMessages(null); nextKeyTime = 0; mouseButtons = 0; inputState.clear(); clearMouseMove() }
         status(message)
     }
     private val host: BluetoothDevice? get() = if (transport == "classic") classic.connectedDevice else hid.connectedDevice
     private var mouseButtons = 0
+    private val inputState = HidInputState()
     private val keyHandler = Handler(Looper.getMainLooper())
     private var nextKeyTime = 0L
     private val mouseHandler = Handler(Looper.getMainLooper())
@@ -67,20 +68,20 @@ internal class HidController(private val context: Context, private val settings:
     fun connectedAddress(): String? = host?.address
     fun keyboardLeds(): Int? = if (!isConnected()) null else if (transport == "classic") classic.keyboardLeds else hid.keyboardLeds
 
-    fun keyboardReport(data: ByteArray) { host?.let { sendReport(it, HidReports.KEYBOARD_ID, data) } }
-    fun consumerReport(usage: Int) { host?.let { sendReport(it, HidReports.CONSUMER_ID, HidReports.consumer(usage)) } }
+    fun keyboardReport(data: ByteArray) { inputState.physicalKeyboard = data.clone(); sendKeyboard() }
+    fun consumerReport(usage: Int) { inputState.physicalConsumer = usage; sendConsumer() }
+    private fun sendKeyboard() { host?.let { sendReport(it, HidReports.KEYBOARD_ID, inputState.keyboard()) } }
+    private fun sendConsumer() { host?.let { sendReport(it, HidReports.CONSUMER_ID, HidReports.consumer(inputState.consumer())) } }
 
     fun key(modifiers: Int, code: Int) {
         val destination = host ?: return
         val pressAt = maxOf(SystemClock.uptimeMillis(), nextKeyTime)
         val releaseAt = pressAt + 18
         keyHandler.postAtTime({
-            if (destination == host) sendReport(destination,
-                HidReports.KEYBOARD_ID, HidReports.keyboard(modifiers, code))
+            if (destination == host) { inputState.virtualModifiers = modifiers; inputState.virtualCode = code; sendKeyboard() }
         }, pressAt)
         keyHandler.postAtTime({
-            if (destination == host) sendReport(destination,
-                HidReports.KEYBOARD_ID, HidReports.keyboard(0, 0))
+            if (destination == host) { inputState.virtualModifiers = 0; inputState.virtualCode = 0; sendKeyboard() }
         }, releaseAt)
         nextKeyTime = releaseAt + 12
     }
@@ -90,12 +91,10 @@ internal class HidController(private val context: Context, private val settings:
         val pressAt = maxOf(SystemClock.uptimeMillis(), nextKeyTime)
         val releaseAt = pressAt + 18
         keyHandler.postAtTime({
-            if (destination == host) sendReport(destination,
-                HidReports.CONSUMER_ID, HidReports.consumer(usage))
+            if (destination == host) { inputState.virtualConsumer = usage; sendConsumer() }
         }, pressAt)
         keyHandler.postAtTime({
-            if (destination == host) sendReport(destination,
-                HidReports.CONSUMER_ID, HidReports.consumer(0))
+            if (destination == host) { inputState.virtualConsumer = 0; sendConsumer() }
         }, releaseAt)
         nextKeyTime = releaseAt + 12
     }
@@ -169,14 +168,12 @@ internal class HidController(private val context: Context, private val settings:
         val releaseAt = pressAt + 24
         keyHandler.postAtTime({
             if (destination == host) {
-                sendReport(destination, HidReports.KEYBOARD_ID,
-                    HidReports.keyboard(HidReports.MOD_CTRL, 0))
+                inputState.virtualModifiers = HidReports.MOD_CTRL; inputState.virtualCode = 0; sendKeyboard()
                 scroll(amount)
             }
         }, pressAt)
         keyHandler.postAtTime({
-            if (destination == host) sendReport(destination,
-                HidReports.KEYBOARD_ID, HidReports.keyboard(0, 0))
+            if (destination == host) { inputState.virtualModifiers = 0; inputState.virtualCode = 0; sendKeyboard() }
         }, releaseAt)
         nextKeyTime = releaseAt + 12
     }
@@ -186,20 +183,20 @@ internal class HidController(private val context: Context, private val settings:
     fun clickMouse(button: Int) { pressMouse(button); releaseMouse(button) }
 
     fun relayMouse(buttons: Int, x: Int, y: Int, wheel: Int) {
-        if (mouseButtons != buttons) { flushMouseMove(); mouseButtons = buttons and 7; sendMouse(0, 0, 0) }
+        if (inputState.physicalButtons != buttons) { flushMouseMove(); inputState.physicalButtons = buttons and 7; sendMouse(0, 0, 0) }
         mouseMove(x, y)
         if (wheel != 0) scroll(wheel)
     }
 
     private fun sendMouse(x: Int, y: Int, wheel: Int) {
         val destination = host ?: return
-        val data = HidReports.mouse(mouseButtons, x, y, wheel)
+        val data = HidReports.mouse(mouseButtons or inputState.physicalButtons, x, y, wheel)
         sendReport(destination, HidReports.MOUSE_ID, data)
     }
 
     fun releaseInputs() {
         keyHandler.removeCallbacksAndMessages(null); nextKeyTime = 0
-        clearMouseMove(); mouseButtons = 0
+        clearMouseMove(); mouseButtons = 0; inputState.clear()
         if (transport == "classic") classic.releaseInputs() else hid.releaseInputs()
     }
 

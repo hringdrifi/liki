@@ -11,15 +11,17 @@ final class LikiLayerTransport: NSObject, CBCentralManagerDelegate, CBPeripheral
     private var device: CBPeripheral?
     private var characteristic: CBCharacteristic?
     private var enabled = false
+    private var targetIdentifier: UUID?
+    private var supported = false
     private var timeout: DispatchWorkItem?
     private var reconnect: DispatchWorkItem?
     init(emit: @escaping ([String: Any]) -> Void) { self.emit = emit; super.init() }
     private func state(_ message: String = "", value: Data? = nil) {
-        emit(["zmkLayer": ["message": message, "bytes": value.map { $0.map(Int.init) as Any } ?? NSNull()]])
+        emit(["zmkLayer": ["supported": supported, "message": message, "bytes": value.map { $0.map(Int.init) as Any } ?? NSNull()]])
     }
     func enable(_ value: Bool) {
         guard enabled != value else { return }
-        enabled = value; disconnect(); state()
+        enabled = value; supported = false; targetIdentifier = nil; disconnect(); state()
         if value { central = CBCentralManager(delegate: self, queue: .main) }
     }
     func retry() {
@@ -44,12 +46,15 @@ final class LikiLayerTransport: NSObject, CBCentralManagerDelegate, CBPeripheral
         guard enabled, device == nil, UIApplication.shared.applicationState == .active,
               let central, central.state == .poweredOn else { return }
         // HID covers keyboards whose custom service has not yet been discovered by iOS.
-        let supported = central.retrieveConnectedPeripherals(withServices: [Self.service])
-        let devices = supported.isEmpty ? central.retrieveConnectedPeripherals(withServices: [CBUUID(string: "1812")]) : supported
+        let supportedDevices = central.retrieveConnectedPeripherals(withServices: [Self.service])
+        let devices = supportedDevices.isEmpty ? central.retrieveConnectedPeripherals(withServices: [CBUUID(string: "1812")]) : supportedDevices
         guard devices.count == 1 else {
+            supported = false; targetIdentifier = nil
             fail(devices.isEmpty ? "接続済みのBLEキーボードがありません" : "BLEキーボードを1台だけ接続してください"); return
         }
-        let peripheral = devices[0]; device = peripheral; peripheral.delegate = self
+        let peripheral = devices[0]
+        if targetIdentifier != peripheral.identifier { supported = false; targetIdentifier = peripheral.identifier; state() }
+        device = peripheral; peripheral.delegate = self
         let work = DispatchWorkItem { [weak self] in self?.fail("ZMKレイヤー連携がタイムアウトしました") }
         timeout = work; DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: work)
         central.connect(peripheral)
@@ -72,7 +77,9 @@ final class LikiLayerTransport: NSObject, CBCentralManagerDelegate, CBPeripheral
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard peripheral === device else { return }
         guard error == nil else { fail("ZMKレイヤーサービスを取得できません"); return }
-        guard let service = peripheral.services?.first(where: { $0.uuid == Self.service }) else { fail("ファームにzmk-feature-likiが必要です", retry: false); return }
+        let service = peripheral.services?.first(where: { $0.uuid == Self.service })
+        supported = service != nil; state()
+        guard let service else { fail("ZMKレイヤーサービスがありません", retry: false); return }
         peripheral.discoverCharacteristics([Self.layer], for: service)
     }
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
@@ -90,5 +97,5 @@ final class LikiLayerTransport: NSObject, CBCentralManagerDelegate, CBPeripheral
         guard error == nil, let value = characteristic.value else { fail("ZMKの現在レイヤーを取得できません"); return }
         timeout?.cancel(); timeout = nil; state(value: value)
     }
-    func close() { enabled = false; disconnect(); state() }
+    func close() { enabled = false; supported = false; targetIdentifier = nil; disconnect(); state() }
 }

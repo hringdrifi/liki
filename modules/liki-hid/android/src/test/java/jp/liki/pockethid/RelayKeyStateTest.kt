@@ -46,4 +46,22 @@ class RelayKeyStateTest {
         assertEquals(0xcd, ExternalKeyboardRelay.consumerUsage(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE))
         assertNull(ExternalKeyboardRelay.keyboardUsage(KeyEvent.KEYCODE_POWER))
     }
+
+    @Test fun zenkakuHankakuKeyCanBeLearnedAndConvertedToGraveAndTilde() {
+        for (code in listOf(KeyEvent.KEYCODE_GRAVE, KeyEvent.KEYCODE_ZENKAKU_HANKAKU)) {
+            val usage = requireNotNull(ExternalKeyboardRelay.keyboardUsage(code))
+            val state = RelayKeyState()
+            state.key(1, usage, true)
+            assertEquals(listOf(0x35), state.pressedUsages())
+            assertArrayEquals(byteArrayOf(2, 0, 0x2f, 0, 0, 0, 0, 0),
+                KeyboardRemapper.translate(state.pressedUsages(), 0, emptyMap(), "us-jis").keyboard)
+            state.key(1, 0xe1, true)
+            assertArrayEquals(byteArrayOf(2, 0, 0x2e, 0, 0, 0, 0, 0),
+                KeyboardRemapper.translate(state.pressedUsages(), 0, emptyMap(), "us-jis").keyboard)
+            state.key(1, usage, false)
+            state.key(1, 0xe1, false)
+            assertArrayEquals(ByteArray(8),
+                KeyboardRemapper.translate(state.pressedUsages(), 0, emptyMap(), "us-jis").keyboard)
+        }
+    }
 }

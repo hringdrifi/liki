@@ -111,6 +111,7 @@ export function Settings({ model: m, onBack, onPrivacy, choose, prompt, run }: {
       if (index !== null) await m.setRelayEffect((['keyboard', 'matrix', 'ripple'] as const)[index]);
     })} />
     <Text style={styles.muted}>ZMK Studio接続中も表示を切り替えられます。キーボードを選び、配置を取得できていない場合はマトリックスを表示します。</Text>
+    <Text style={styles.muted}>「外部＋仮想キーボード」では仮想キーボードを表示します。ZMK Studioのレイアウト表示やエフェクトは「外部キーボード・マウス」に切り替えると使えます。</Text>
     {slider('external_mouse_speed', '外部マウスの速度', .5, 3, '倍')}
     <Section title="このアプリについて" />
     <Button title="プライバシーポリシー" onPress={onPrivacy} />

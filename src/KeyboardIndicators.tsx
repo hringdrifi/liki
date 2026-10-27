@@ -10,7 +10,7 @@ export function KeyboardIndicators({ model }: { model: LikiModel }) {
       ({ label, active: leds === undefined ? undefined : (leds & bit) !== 0 })),
   ];
   return <View pointerEvents="none" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 12, paddingVertical: 4 }}>
-    {model.relayMode && model.studio.activeLayer !== undefined && <Text accessibilityLabel={`ZMKの現在レイヤー ${model.studio.activeLayer}`}
+    {model.relayMode && !model.virtualKeyboardEnabled && model.studio.activeLayer !== undefined && <Text accessibilityLabel={`ZMKの現在レイヤー ${model.studio.activeLayer}`}
       style={{ color: colors.text, paddingHorizontal: 8, paddingVertical: 4, fontSize: 12, fontWeight: 'bold' }}>L{model.studio.activeLayer}</Text>}
     {indicators.map(({ label, active }) => <View key={label} accessibilityLabel={`${label}: ${active === undefined ? '不明' : active ? 'オン' : 'オフ'}`}
       style={{ backgroundColor: active ? '#24736d' : colors.surface, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>

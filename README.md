@@ -79,7 +79,7 @@ KLEはキーの表示・配置形式であり、HIDコードを直接指定し�
 
 ## iOSでの使い方
 
-1. 署名した開発ビルドをiPhoneへインストールし、Metroへ接続してLikiを開きます。
+1. 自分の署名環境で作成した内部配布ビルドをiPhoneへインストールしてLikiを開きます。`preview`はMetro不要、`development`はMetroへの接続が必要です。
 2. Bluetooth権限を許可し、必要に応じて「BLEペアリング待機」を押します。
 3. PCのBluetooth設定から「Liki」を追加して、ペアリング要求を承認します。iOS側からペアリング済みPCの一覧取得・接続開始はできません。
 4. 接続後はAndroid版と同じキーボード・トラックパッド画面を使います。右端中央から左へスワイプするとメニューが開きます。使用中はLikiを前面に置いてください。
@@ -89,6 +89,8 @@ iOSのBLE HID実装は [darwin-bt-remote](https://github.com/jqssun/darwin-bt-re
 ## 開発とビルド
 
 プロジェクトはリポジトリ直下に置き、画面と操作はTypeScript、Android HIDはKotlin、iOS BLE HIDはSwiftで実装しています。ネイティブモジュールは `modules/liki-hid/` にあります。
+
+普段使いやサーバーなしの実機確認には、JavaScriptを同梱するビルドを使います。Androidの配布APKと、EASの`preview`（Android・iOS）はMetro不要です。`development`やAndroidのdebug APKは、起動・リロード時にMetroからコードを読み込む開発用です。
 
 AndroidのローカルビルドにはNode.js 24、JDK 21、Android SDK Platform / Build-Tools 37、CMake 3.31.6を使用しています。
 
@@ -115,6 +117,12 @@ npm start -- --lan
 ```
 
 端末登録のWebsite方式では、表示URLを対象iPhoneのSafariで開きます。ビルド後はインストールページをiPhoneで開いてインストールします。開発クライアントの起動時は、iPhoneとPCを同じネットワークに接続し、PCのWi-Fi側IPのMetroへ接続してください。キー・マウス入力そのものはBluetoothで送信します。ネイティブコードを変更した場合は再ビルドが必要です。
+
+iOSをサーバー不要で使う場合は、同じ署名・端末登録の準備後に次を実行します。`preview`も登録済み端末向けの内部配布で、App Storeへの公開ではありません。JavaScriptを同梱するため、JS/TSだけの変更でも更新には再ビルド・再インストールが必要です。
+
+```powershell
+npx --yes eas-cli@latest build --platform ios --profile preview
+```
 
 Android 12以降ではBluetooth接続・公開の実行時権限を要求します。探索権限や位置情報権限は不要です。
 
