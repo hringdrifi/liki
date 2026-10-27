@@ -66,6 +66,8 @@ export class LikiModel {
   selectedName?: string; selectedAddress?: string; overrides: Data = {}; layers: Data = {}; inferred: Data = {};
   density = 1; xdpi = 160; initialized = false; editing = false; settingsVisible = false; showingControls = false;
   relayMode = false; relayPaused = false;
+  zmkLayerMessage = '';
+  zmkLayerSupported = false;
   private resetStudioView?: () => void;
   isZmkKeyboard = false; externalEditing = false; externalEditZmk = false; relayLearning = false;
   readonly studio = new StudioClient((bytes, id, label) => this.call('studioWrite', { bytes, id, label }), () => {
@@ -84,9 +86,37 @@ export class LikiModel {
   flag(key: string) { return this.settings[key] === true; }
   num(key: string) { return Number(this.settings[key] ?? 0); }
   get connected() { return this.status.connected === true; }
+  get virtualKeyboardEnabled() { return !this.relayMode || this.preferences.relay_virtual_keyboard === 'true'; }
+  get syncedLayer(): number | undefined {
+    return this.relayMode && this.virtualKeyboardEnabled && this.zmkLayerSupported ? this.studio.activeLayer : undefined;
+  }
+  get shiftActive() {
+    return this.relayMode && this.relayPressed.some(code => code === 0xe1 || code === 0xe5) ||
+      this.virtualKeyboardEnabled && (this.modifiers & 0x22) !== 0;
+  }
+  get keyboardLeds(): number | undefined {
+    const value = this.status.keyboardLeds;
+    return this.connected && Number.isInteger(value) && value >= 0 && value <= 31 ? value : undefined;
+  }
   get relayRemaps() { return parseRelayRemaps(this.preferences.relay_remaps ?? '[]'); }
-  get relayEffect(): 'matrix' | 'ripple' { return this.preferences.relay_effect === 'ripple' ? 'ripple' : 'matrix'; }
-  async setRelayEffect(value: 'matrix' | 'ripple') {
+  get relayEffect(): 'keyboard' | 'matrix' | 'ripple' {
+    const value = this.preferences.relay_effect;
+    return value === 'matrix' || value === 'ripple' ? value : 'keyboard';
+  }
+  get showKeyboardEffect() {
+    return !this.virtualKeyboardEnabled && this.relayEffect === 'keyboard' && !!this.studio.layout &&
+      (this.studio.activeLayer === undefined || !!this.studio.layout.layers[this.studio.activeLayer]);
+  }
+  get shiftBorderColor(): number { return this.settings.shift_border_color ?? 0x80cbc4; }
+  borderColorForLayer(layer: number | undefined): number {
+    if (!this.editing && !this.externalEditing && this.shiftActive) return this.shiftBorderColor;
+    return layer === undefined ? 0x657789 : this.settings.border_colors?.[layer] ?? 0x657789;
+  }
+  get trackpadBorderColor(): number {
+    const layer = this.virtualKeyboardEnabled ? this.displayedLayer : this.studio.activeLayer;
+    return this.borderColorForLayer(layer);
+  }
+  async setRelayEffect(value: 'keyboard' | 'matrix' | 'ripple') {
     await this.persist({ relay_effect: value }); this.changed();
   }
   get relayLayout(): 'none' | 'us-jis' | 'jis-us' {
@@ -118,6 +148,10 @@ export class LikiModel {
     this.syncPage();
   }
   get trackpadPanelEnabled() { return this.preferences.trackpad_panel_enabled === 'true'; }
+  get indicatorsVisible() { return this.preferences.indicators_visible !== 'false'; }
+  async setIndicatorsVisible(visible: boolean) {
+    await this.persist({ indicators_visible: visible ? null : 'false' }); this.changed();
+  }
   get trackpadPanelSize() {
     const size = Number(this.preferences.trackpad_panel_size ?? 33);
     return Number.isFinite(size) ? clamp(size, TRACKPAD_PANEL_MIN_PERCENT, TRACKPAD_PANEL_MAX_PERCENT) : 33;
@@ -144,6 +178,12 @@ export class LikiModel {
   }
   call(method: string, args: Data = {}) { return this.native.invoke(method, args); }
   send(method: string, args: Data = {}) { void this.call(method, args).catch(this.onError); }
+  haptic() {
+    if (!this.flag('touch_vibration')) return;
+    const strength = clamp(Math.trunc(Number(this.settings.touch_vibration_strength ?? 1)), 0, 2);
+    this.send('haptic', { style: ['light', 'medium', 'heavy'][strength] });
+  }
+  click(button: number) { this.send('click', { button }); }
   changed() { this.saveSession(); this.listeners.forEach(fn => fn()); }
   saveSession() {
     if (!this.initialized) return;
@@ -173,6 +213,19 @@ export class LikiModel {
     } catch (e) { this.error = String(e); this.changed(); }
   }
   acceptStatus(status: Data) {
+    if ('zmkLayer' in status) {
+      const previousSync = this.syncedLayer;
+      this.zmkLayerSupported = status.zmkLayer?.supported === true;
+      this.zmkLayerMessage = status.zmkLayer?.message ?? '';
+      this.studio.receiveLayer(status.zmkLayer?.bytes);
+      if (this.syncedLayer !== undefined && (previousSync === undefined || this.layer !== this.syncedLayer)) {
+        this.setLayer(this.syncedLayer); this.changed();
+      }
+      if (status.zmkLayer?.bytes != null && this.studio.activeLayer === undefined) {
+        this.zmkLayerMessage = 'ZMKレイヤー通知の形式に対応していません'; this.changed();
+      }
+      return;
+    }
     if (status.studioBytes) { this.studio.receive(status.studioBytes); return; }
     if (status.studioState) {
       if (status.studioState.ready) {
@@ -208,9 +261,9 @@ export class LikiModel {
     if (!relay) { this.relayPressed = []; this.relayConsumer = 0; }
     this.send('page', { controls: this.showingControls, settings: this.settingsVisible, relay, studio, relayLearning: this.relayLearning, remap: !this.isZmkKeyboard });
   }
-  async setRelayMode(enabled: boolean) {
+  async setRelayMode(enabled: boolean, virtualKeyboard = false) {
     if (enabled && this.status.relaySupported !== true) throw Error('外付けキーボードの中継に対応したネイティブビルドをインストールしてください');
-    await this.persist({ input_mode: enabled ? 'relay' : null });
+    await this.persist({ input_mode: enabled ? 'relay' : null, relay_virtual_keyboard: enabled && virtualKeyboard ? 'true' : null });
     this.relayMode = enabled; this.editing = false; this.setLayer(0); this.syncPage(); this.changed();
   }
   pauseRelay(paused: boolean) { if (this.relayPaused !== paused) { this.relayPaused = paused; this.syncPage(); } }
@@ -260,9 +313,10 @@ export class LikiModel {
   bindingFor(key: KeyShape, layer = this.displayedLayer) { return this.bindings.get(layer ? this.layers[layer]?.[key.index] : undefined) ?? this.bindings.get(this.overrides[key.index]); }
   overridden(key: KeyShape) { return Object.hasOwn(this.displayedLayer ? this.layers[this.displayedLayer] ?? {} : this.overrides, key.index); }
   setLayer(layer: number) {
-    this.layer = clamp(layer, 0, 3); this.layerKey = this.oneShotReturn = this.oneShotKey = this.momentaryPrevious = this.momentaryKey = this.momentaryTarget = undefined; this.modifiers = 0;
+    this.layer = this.syncedLayer ?? clamp(layer, 0, 3); this.layerKey = this.oneShotReturn = this.oneShotKey = this.momentaryPrevious = this.momentaryKey = this.momentaryTarget = undefined; this.modifiers = 0;
   }
   momentaryDown(key: KeyShape) {
+    if (this.syncedLayer !== undefined) return;
     const b = this.bindingFor(key); if (b?.action !== 'MOMENTARY') return;
     const previous = this.layer, marker = this.layerKey; this.setLayer(b.layer); this.momentaryPrevious = previous; this.momentaryKey = marker;
     this.momentaryTarget = b.layer; this.layerKey = key.index; this.changed();
@@ -273,7 +327,8 @@ export class LikiModel {
     if (previous !== undefined && this.layer === target) { this.setLayer(previous); this.layerKey = marker; if (notify) this.changed(); }
   }
   async tap(key: KeyShape, layer = this.layer) {
-    const b = this.bindingFor(key, layer); if (!b) throw Error('メニューのキー割り当て編集で設定してください');
+    const b = this.bindingFor(key, this.syncedLayer ?? layer); if (!b) throw Error('メニューのキー割り当て編集で設定してください');
+    if (this.syncedLayer !== undefined && b.action !== 'NONE') return;
     switch (b.action) {
       case 'BASE': this.setLayer(0); break;
       case 'TOGGLE': this.setLayer(this.layer === b.layer ? 0 : b.layer); if (this.layer) this.layerKey = key.index; break;
@@ -295,11 +350,11 @@ export class LikiModel {
     }
     this.changed();
   }
-  beginEdit() { this.baseSnapshot = JSON.stringify(this.overrides); this.layersSnapshot = JSON.stringify(this.layers); this.editLayer = this.layer; this.editing = true; this.changed(); }
+  beginEdit() { this.baseSnapshot = JSON.stringify(this.overrides); this.layersSnapshot = JSON.stringify(this.layers); this.editLayer = this.layer <= 3 ? this.layer : 0; this.editing = true; this.syncPage(); this.changed(); }
   async endEdit(save: boolean) {
     if (save) await this.persist({ overrides: JSON.stringify(this.overrides), layer_overrides: JSON.stringify(this.layers) });
     else { this.overrides = JSON.parse(this.baseSnapshot!); this.layers = JSON.parse(this.layersSnapshot!); }
-    this.editing = false; this.baseSnapshot = this.layersSnapshot = undefined; this.changed();
+    this.editing = false; this.baseSnapshot = this.layersSnapshot = undefined; this.syncPage(); this.changed();
   }
   async assign(key: KeyShape, name?: string) {
     const mapping = this.editLayer ? this.layers[this.editLayer] ??= {} : this.overrides;
@@ -307,7 +362,7 @@ export class LikiModel {
   }
   async applyLayout(value: string) {
     await this.readLayout(value); this.overrides = { ...this.inferred }; this.layers = {}; this.selectedName = undefined; this.setLayer(0); this.editing = false;
-    if (this.relayMode) await this.setRelayMode(false);
+    if (this.relayMode) await this.setRelayMode(true, true);
     await this.setSetting('auto_key_scale_px', 0);
     await this.persist({ kle_json: this.json, overrides: JSON.stringify(this.overrides), layer_overrides: '{}', selected_saved_layout_name: null }); this.changed();
   }
@@ -316,7 +371,7 @@ export class LikiModel {
     return () => { if (this.resetStudioView === reset) this.resetStudioView = undefined; };
   }
   async resetView() {
-    if (this.relayMode) { this.resetStudioView?.(); this.changed(); return; }
+    if (!this.virtualKeyboardEnabled) { this.resetStudioView?.(); this.changed(); return; }
     if (this.geometry) { this.geometry.zoom = 1; this.geometry.pan = zero(); }
     await this.setSetting('key_pitch_mm', 0); await this.setSetting('auto_key_scale_px', 0); this.changed();
   }
@@ -329,7 +384,7 @@ export class LikiModel {
     const base = JSON.parse(entry.overrides ?? '{}'), extra = JSON.parse(entry.layer_overrides ?? '{}');
     const state = new Geometry(this.keys); state.restore(entry, this.density);
     await this.readLayout(entry.kle_json); this.overrides = base; this.layers = extra; this.geometry!.zoom = state.zoom; this.geometry!.pan = state.pan;
-    if (this.relayMode) await this.setRelayMode(false);
+    if (this.relayMode) await this.setRelayMode(true, true);
     this.selectedName = entry.name; this.setLayer(0); await this.resolveBindings(); await this.setSetting('auto_key_scale_px', 0);
     await this.persist({ kle_json: this.json, overrides: JSON.stringify(base), layer_overrides: JSON.stringify(extra), selected_saved_layout_name: entry.name }); this.changed();
   }

@@ -58,7 +58,7 @@ function DrawKey({ shape: k, model: m }: { shape: KeyShape; model: LikiModel }) 
   const rects = [primary, ...(primary.some((v, i) => v !== secondary[i]) ? [secondary] : [])];
   return <G transform={`rotate(${k.rotation},${k.rx},${k.ry})`}>
     {!k.decal && rects.map(([x, y, w, h], i) => <Rect key={i} x={x + .025} y={y + .025} width={w - .05} height={h - .05} rx={.1} ry={.1}
-      fill={fill} stroke={hex(m.settings.border_colors[m.displayedLayer])} strokeWidth={.018} />)}
+      fill={fill} stroke={hex(m.borderColorForLayer(m.displayedLayer))} strokeWidth={.018} />)}
     <G transform={`scale(${1 / textScale})`}>
     {!showBinding && k.labels.slice(0, 9).map((label, i) => {
       if (!label) return null; const col = i % 3, row = Math.floor(i / 3);

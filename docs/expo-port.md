@@ -1,4 +1,6 @@
-# React Native + Expo の移植
+# React Native + Expo の移植記録
+
+この文書は2026年10月20〜21日の移植作業と当時の検証記録です。以下のバージョン・テスト件数・未検証項目は当時の状態を示します。現行版の導入には[ビルドと導入手順](build-and-install.md)、操作と検証範囲には[使い方ガイド](usage.md)と[BLEの検証記録](android-ble-hid.md)を参照してください。
 
 ブランチ: `codex/expo-faithful-port`。基点: main `2c2f3f4`。
 
@@ -31,7 +33,7 @@ APKの出力先は `android/app/build/outputs/apk/debug/app-debug.apk`。Expo Go
 
 ## Macを使わないEAS Build
 
-リポジトリ直下でExpoアカウントにログインし、EASプロジェクトを設定してから実行する。
+リポジトリ直下でExpoアカウントにログインし、設定済みのEASプロジェクトへのアクセスを確認してから実行する。自分のフォークでは、自分がアクセスできるExpoプロジェクトを設定する。
 
 ```text
 npx eas-cli@latest build --platform android --profile development

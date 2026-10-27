@@ -12,6 +12,8 @@ internal class ClassicHidPeripheral(private val context: Context, private val ch
     private val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
     private var hid: BluetoothHidDevice? = null
     var connectedDevice: BluetoothDevice? = null
+        private set(value) { if (field != value) keyboardLeds = null; field = value }
+    var keyboardLeds: Int? = null
         private set
     private var connectingDevice: BluetoothDevice? = null
     private var cancellingDevice: BluetoothDevice? = null
@@ -110,21 +112,33 @@ internal class ClassicHidPeripheral(private val context: Context, private val ch
                 type == BluetoothHidDevice.REPORT_TYPE_INPUT && (id.toInt() == HidReports.KEYBOARD_ID || (bootMode && id.toInt() == 0)) -> HidReports.keyboard(0, 0)
                 type == BluetoothHidDevice.REPORT_TYPE_INPUT && id.toInt() == HidReports.MOUSE_ID -> HidReports.mouse(0, 0, 0, 0)
                 type == BluetoothHidDevice.REPORT_TYPE_INPUT && id.toInt() == HidReports.CONSUMER_ID -> HidReports.consumer(0)
-                type == BluetoothHidDevice.REPORT_TYPE_OUTPUT && id.toInt() == HidReports.KEYBOARD_ID -> byteArrayOf(0)
+                type == BluetoothHidDevice.REPORT_TYPE_OUTPUT && (id.toInt() == HidReports.KEYBOARD_ID || (bootMode && id.toInt() == 0)) -> byteArrayOf((keyboardLeds ?: 0).toByte())
                 else -> { service.reportError(device, BluetoothHidDevice.ERROR_RSP_INVALID_PARAM); return }
             }
             service.replyReport(device, type, id, data)
         }
         override fun onSetReport(device: BluetoothDevice, type: Byte, id: Byte, data: ByteArray) {
             if (epoch != generation) return
-            hid?.reportError(device, if (type == BluetoothHidDevice.REPORT_TYPE_OUTPUT && (id.toInt() == HidReports.KEYBOARD_ID || (bootMode && id.toInt() == 0)))
+            val valid = type == BluetoothHidDevice.REPORT_TYPE_OUTPUT && isKeyboardOutput(device, id) && data.size == 1
+            if (valid) updateKeyboardLeds(data)
+            hid?.reportError(device, if (valid)
                 BluetoothHidDevice.ERROR_RSP_SUCCESS else BluetoothHidDevice.ERROR_RSP_INVALID_PARAM)
+        }
+        override fun onInterruptData(device: BluetoothDevice, reportId: Byte, data: ByteArray) {
+            if (epoch == generation && isKeyboardOutput(device, reportId) && data.size == 1) updateKeyboardLeds(data)
         }
         override fun onVirtualCableUnplug(device: BluetoothDevice) {
             if (epoch != generation) return
             connectedDevice = null; connectingDevice = null
             changed("PC側でペアリングが解除されました")
         }
+    }
+
+    private fun isKeyboardOutput(device: BluetoothDevice, id: Byte) = device == connectedDevice &&
+        (id.toInt() == HidReports.KEYBOARD_ID || (bootMode && id.toInt() == 0))
+    private fun updateKeyboardLeds(data: ByteArray) {
+        keyboardLeds = data[0].toInt() and 0x1f
+        changed("Classic HID接続中: ${connectedDevice?.name ?: "PC"}")
     }
 
     fun connect(address: String) {

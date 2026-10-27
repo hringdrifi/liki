@@ -183,7 +183,7 @@ internal class ExternalKeyboardRelay(
             KeyEvent.KEYCODE_BACKSLASH -> 0x31
             KeyEvent.KEYCODE_SEMICOLON -> 0x33
             KeyEvent.KEYCODE_APOSTROPHE -> 0x34
-            KeyEvent.KEYCODE_GRAVE -> 0x35
+            KeyEvent.KEYCODE_GRAVE, KeyEvent.KEYCODE_ZENKAKU_HANKAKU -> 0x35
             KeyEvent.KEYCODE_COMMA -> 0x36
             KeyEvent.KEYCODE_PERIOD -> 0x37
             KeyEvent.KEYCODE_SLASH -> 0x38

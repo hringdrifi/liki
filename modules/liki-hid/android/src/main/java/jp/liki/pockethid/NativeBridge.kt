@@ -9,7 +9,6 @@ import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.os.Build
-import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -45,13 +44,14 @@ internal class NativeBridge(
         context.mainExecutor.execute { onStatus(status, connected) }
     }
     private val relay: ExternalKeyboardRelay = ExternalKeyboardRelay(context, { hid.isConnected() }, hid::keyboardReport, hid::consumerReport,
-        hid::relayMouse, settings::externalMouseSpeed, { activityProvider()?.window?.decorView }, { publish(); studio.inputDevicesChanged() },
+        hid::relayMouse, settings::externalMouseSpeed, { activityProvider()?.window?.decorView }, { publish(); studio.inputDevicesChanged(); layerTransport.inputDevicesChanged() },
         { pressed, consumer -> emit(mapOf("relayInput" to mapOf("pressed" to pressed, "consumer" to consumer))) })
     private val studio: StudioTransport = StudioTransport(context) { event ->
         val state = event["studioState"] as? Map<*, *>
         if (state != null) { studioConnected = state["ready"] == true; relay.configureRemaps(apply = remapRequested && !studioConnected) }
         emit(event)
     }
+    private val layerTransport = LikiLayerTransport(context) { event -> emit(event) }
     private fun parseRemaps(json: String): Map<Int, List<Int>> {
         val values = JSONArray(json); require(values.length() <= 256)
         val result = linkedMapOf<Int, List<Int>>()
@@ -82,7 +82,7 @@ internal class NativeBridge(
         fun int(key: String) = (args[key] as? Number)?.toInt() ?: 0
         fun string(key: String) = requireNotNull(args[key] as? String)
         return when (method) {
-            "initialize" -> { hid.releaseInputs(); relay.enable(false); relayRequested = false; relay.configureRemaps(parseRemaps(preferences.getString("relay_remaps", "[]") ?: "[]")); relay.configureLayout(preferences.getString("relay_layout", "none") ?: "none"); relay.start(); applyWindowSettings(); mapOf("layout" to layouts.initial(), "preferences" to preferences.all,
+            "initialize" -> { layerTransport.enable(false); hid.releaseInputs(); relay.enable(false); relayRequested = false; relay.configureRemaps(parseRemaps(preferences.getString("relay_remaps", "[]") ?: "[]")); relay.configureLayout(preferences.getString("relay_layout", "none") ?: "none"); relay.start(); applyWindowSettings(); mapOf("layout" to layouts.initial(), "preferences" to preferences.all,
                 "settings" to settingsValues(), "bindings" to KeyBinding.options().map(::bindingMap),
                 "density" to context.resources.displayMetrics.density.toDouble(),
                 "xdpi" to context.resources.displayMetrics.xdpi.toDouble(),
@@ -93,10 +93,11 @@ internal class NativeBridge(
                 val value = string("value")
                 hid.selectTransport(value)
                 preferences.edit().putString("hid_transport", value).apply()
-                if (value == "classic") { relay.enable(false); studio.enable(false); relayRequested = false }
+                if (value == "classic") { relay.enable(false); studio.enable(false); layerTransport.enable(false); relayRequested = false }
                 publish(); status()
             }
             "studioRetry" -> { studio.retry(); null }
+            "zmkLayerRetry" -> { layerTransport.retry(); null }
             "studioWrite" -> { studio.write((args["bytes"] as? List<*>)?.map { (it as Number).toInt() } ?: emptyList(), int("id"), string("label")); null }
             "studioComplete" -> { studio.complete(int("id")); null }
             "relayRemaps" -> {
@@ -119,8 +120,10 @@ internal class NativeBridge(
             "zoom" -> { hid.zoom(int("amount")); null }
             "mouseDown" -> { hid.pressMouse(int("button")); null }
             "mouseUp" -> { hid.releaseMouse(int("button")); null }
-            "click" -> { hid.clickMouse(int("button")); vibrate(); null }
-            "vibrate" -> { vibrate(); null }
+            "click" -> { hid.clickMouse(int("button")); null }
+            "hapticsEnabled" -> activityProvider()?.window?.decorView?.isHapticFeedbackEnabled == true &&
+                android.provider.Settings.System.getInt(context.contentResolver,
+                    android.provider.Settings.System.HAPTIC_FEEDBACK_ENABLED, 1) != 0
             "parse" -> parseLayout(string("json"))
             "binding" -> KeyBinding.named(string("name"))?.let(::bindingMap)
             "asset" -> {
@@ -150,6 +153,7 @@ internal class NativeBridge(
                 remapRequested = args["remap"] != false
                 relay.configureRemaps(learn = args["relayLearning"] == true, apply = remapRequested && !studioConnected)
                 studio.enable(hid.transport == "ble" && (args["studio"] as? Boolean ?: requested))
+                layerTransport.enable(hid.transport == "ble" && (args["studio"] as? Boolean ?: requested))
                 applyWindowSettings(); null
             }
             else -> error("Unknown HID command: $method")
@@ -185,6 +189,7 @@ internal class NativeBridge(
         applyWindowSettings()
     }
     fun pause() {
+        layerTransport.enable(false)
         studio.enable(false)
         relay.foreground(false)
         hid.releaseInputs()
@@ -198,6 +203,7 @@ internal class NativeBridge(
         relay.foreground(resumed); relay.focus(currentActivity?.hasWindowFocus() == true)
     }
     fun detach() {
+        layerTransport.close()
         studio.close()
         pause()
         observedView?.removeOnLayoutChangeListener(layoutListener); observedView = null
@@ -253,6 +259,7 @@ internal class NativeBridge(
         "modifier" to b.modifier, "layer" to b.layer, "action" to b.layerAction.name, "consumer" to b.consumerUsage)
 
     private fun status(): Map<String, Any?> = mapOf("message" to message,
+        "keyboardLeds" to hid.keyboardLeds(),
         "connected" to hid.isConnected(), "connecting" to hid.isConnecting(), "cancelling" to hid.isCancelling(),
         "restoring" to false, "transport" to hid.transport, "transports" to listOf("ble", "classic"),
         "relaySupported" to (hid.transport == "ble"), "remapSupported" to true, "keyboards" to if (hid.transport == "ble") relay.devices() else emptyList<Any>(),
@@ -260,13 +267,12 @@ internal class NativeBridge(
         "devices" to hid.pairedDevices().map { mapOf("address" to it.address, "name" to (it.name ?: it.address)) },
         "lastAddress" to preferences.getString("last_device_address", null))
     private fun publish() { emit(status()) }
-    private fun vibrate() { if (settings.touchVibration()) activityProvider()?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) }
-
     private fun settingsValues(): Map<String, Any> = mapOf(
         "sticky_modifiers" to settings.stickyModifiers(), "kle_json_key_labels" to settings.kleJsonKeyLabels(),
         "pinch_zoom" to settings.pinchZoom(), "drag_move_keyboard" to settings.dragMoveKeyboard(),
         "keep_screen_on" to settings.keepScreenOn(), "fullscreen_controls" to settings.fullscreenControls(),
         "touch_vibration" to settings.touchVibration(), "screen_orientation" to settings.screenOrientation(),
+        "touch_vibration_strength" to settings.touchVibrationStrength(),
         "key_pitch_mm" to settings.keyPitchMm().toDouble(), "auto_key_scale_px" to settings.autoKeyScalePx().toDouble(),
         "tap_to_click" to settings.tapToClick(), "hold_to_drag" to settings.holdToDrag(),
         "two_finger_scroll" to settings.twoFingerScroll(), "trackpad_pinch_zoom" to settings.trackpadPinchZoom(),
@@ -274,10 +280,12 @@ internal class NativeBridge(
         "three_finger_middle_click" to settings.threeFingerMiddleClick(), "pointer_speed" to settings.pointerSpeed().toDouble(),
         "external_mouse_speed" to settings.externalMouseSpeed().toDouble(),
         "pointer_send_mode" to settings.pointerSendMode(), "scroll_speed" to settings.scrollSpeed().toDouble(),
-        "reverse_scroll" to settings.reverseScroll(), "border_colors" to (0..3).map(settings::layerBorderColor))
+        "reverse_scroll" to settings.reverseScroll(), "border_colors" to (0..3).map(settings::layerBorderColor),
+        "shift_border_color" to settings.shiftBorderColor())
 
     private fun saveSetting(key: String, value: Any?) {
         when (key) {
+            "shift_border_color" -> settings.setShiftBorderColor((value as Number).toInt())
             "sticky_modifiers" -> settings.setStickyModifiers(value as Boolean)
             "kle_json_key_labels" -> settings.setKleJsonKeyLabels(value as Boolean)
             "pinch_zoom" -> settings.setPinchZoom(value as Boolean)
@@ -285,6 +293,7 @@ internal class NativeBridge(
             "keep_screen_on" -> settings.setKeepScreenOn(value as Boolean)
             "fullscreen_controls" -> settings.setFullscreenControls(value as Boolean)
             "touch_vibration" -> settings.setTouchVibration(value as Boolean)
+            "touch_vibration_strength" -> settings.setTouchVibrationStrength((value as Number).toInt())
             "screen_orientation" -> settings.setScreenOrientation((value as Number).toInt())
             "key_pitch_mm" -> settings.setKeyPitchMm((value as Number).toFloat())
             "auto_key_scale_px" -> if ((value as Number).toFloat() > 0) settings.setAutoKeyScalePx(value.toFloat()) else settings.clearAutoKeyScalePx()

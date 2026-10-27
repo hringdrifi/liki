@@ -8,7 +8,7 @@ internal class AppSettings(context: Context) {
 
     fun layerBorderColor(layer: Int): Int {
         val defaults = intArrayOf(
-            Color.rgb(101, 119, 137), Color.rgb(128, 203, 196),
+            Color.rgb(101, 119, 137), Color.rgb(113, 169, 232),
             Color.rgb(237, 179, 105), Color.rgb(190, 156, 231))
         val index = layer.coerceIn(0, 3)
         return preferences.getInt("layer_border_color_$index", defaults[index])
@@ -17,6 +17,9 @@ internal class AppSettings(context: Context) {
     fun setLayerBorderColor(layer: Int, color: Int) {
         if (layer in 0..3) preferences.edit().putInt("layer_border_color_$layer", color).apply()
     }
+
+    fun shiftBorderColor(): Int = preferences.getInt("shift_border_color", Color.rgb(128, 203, 196))
+    fun setShiftBorderColor(color: Int) { preferences.edit().putInt("shift_border_color", color).apply() }
 
     fun stickyModifiers(): Boolean = preferences.getBoolean("sticky_modifiers", true)
     fun setStickyModifiers(enabled: Boolean) = save("sticky_modifiers", enabled)
@@ -38,6 +41,11 @@ internal class AppSettings(context: Context) {
 
     fun touchVibration(): Boolean = preferences.getBoolean("touch_vibration", false)
     fun setTouchVibration(enabled: Boolean) = save("touch_vibration", enabled)
+
+    fun touchVibrationStrength(): Int = preferences.getInt("touch_vibration_strength", 1).coerceIn(0, 2)
+    fun setTouchVibrationStrength(strength: Int) {
+        preferences.edit().putInt("touch_vibration_strength", strength.coerceIn(0, 2)).apply()
+    }
 
     // 0 follows the device setting; 1-3 lock portrait, landscape, or reverse landscape.
     fun screenOrientation(): Int = preferences.getInt("screen_orientation", 0).coerceIn(0, 3)
