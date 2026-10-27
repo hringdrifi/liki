@@ -4,7 +4,7 @@ import type { GestureResponderEvent } from 'react-native';
 import Svg, { G, Rect, Text as SvgText } from 'react-native-svg';
 import { Geometry } from './model';
 import type { LikiModel } from './model';
-import { colors } from './Keyboard';
+import { colors, hex } from './Keyboard';
 import { studioKeyActive } from './zmk';
 import { KeyRain } from './KeyRain';
 import { StudioKeyboardGesture } from './studio-gesture';
@@ -32,19 +32,20 @@ export function StudioKeyboard({ model, selectedKey, onSelectKey, onSelectLayer,
     if (kind === 'cancel') gesture.cancel();
     redraw();
   };
-  const layer = layout?.layers[client.layer];
-  if (!layout) return <View style={{ flex: 1 }}>
+  const displayLayer = onSelectKey ? client.layer : client.displayLayer;
+  const layer = layout?.layers[displayLayer];
+  if (!layout || !onSelectKey && !model.showKeyboardEffect) return <View style={{ flex: 1 }}>
     {model.isZmkKeyboard && !!client.message && <Text style={{ color: colors.text, padding: 12 }}>{client.message}</Text>}
     {showEffect && <KeyRain key={model.relayEffect} model={model} />}
   </View>;
   return <View style={{ flex: 1, padding: 12, gap: 8 }}>
     {layout && geometry && layer && <>
-      <ScrollView horizontal style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 8 }}>
+      {client.activeLayer !== undefined && !onSelectKey ? <Text style={{ color: colors.text }}>現在のレイヤー: {layer.name}</Text> : <ScrollView horizontal style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 8 }}>
         {layout.layers.map((layer, i) => <Pressable key={i} accessibilityRole="button" accessibilityState={{ selected: client.layer === i }}
           onPress={() => { client.layer = i; redraw(); onSelectLayer?.(); }} style={{ padding: 10, backgroundColor: client.layer === i ? '#24736d' : colors.surface, borderRadius: 6 }}>
           <Text style={{ color: colors.text }}>{layer.name}</Text>
         </Pressable>)}
-      </ScrollView>
+      </ScrollView>}
       <View style={{ flex: 1, minHeight: 120, overflow: 'hidden' }} accessibilityLabel="ZMKキーボード。ドラッグで移動、ピンチで拡大縮小、編集時はタップでキーを選択"
         onLayout={e => {
           gesture?.setViewport(e.nativeEvent.layout.width, e.nativeEvent.layout.height);
@@ -60,7 +61,7 @@ export function StudioKeyboard({ model, selectedKey, onSelectKey, onSelectLayer,
               const lines = binding.label.split(' / '), size = Math.min(.22, (key.w - .12) / Math.max(2, ...lines.map(l => l.length * .6)));
               return <G key={key.index} transform={`rotate(${key.rotation},${key.rx},${key.ry})`}>
                 <Rect x={key.x + .025} y={key.y + .025} width={key.w - .05} height={key.h - .05} rx={.08}
-                  fill={active ? '#24736d' : colors.surface} stroke={active ? colors.accent : '#657789'} strokeWidth={.025} />
+                  fill={active ? '#24736d' : colors.surface} stroke={!onSelectKey && client.activeLayer !== undefined ? hex(model.borderColorForLayer(client.activeLayer)) : active ? colors.accent : '#657789'} strokeWidth={.025} />
                 {lines.map((line, i) => <SvgText key={i} x={key.x + key.w / 2} y={key.y + key.h / 2 + size * (.3 + (i - (lines.length - 1) / 2) * 1.2)}
                   fill={colors.text} fontSize={size} textAnchor="middle">{line}</SvgText>)}
               </G>;

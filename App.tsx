@@ -6,6 +6,7 @@ import { backend, unavailable } from './src/native';
 import { LikiModel } from './src/model';
 import type { KeyShape, Data } from './src/model';
 import { Keyboard, colors } from './src/Keyboard';
+import { KeyboardIndicators } from './src/KeyboardIndicators';
 import { StudioKeyboard } from './src/StudioKeyboard';
 import { TrackpadPanel } from './src/TrackpadPanel';
 import { KeyRain } from './src/KeyRain';
@@ -93,7 +94,7 @@ function Liki() {
     const options = model.options.filter(b => bindingInCategory(b, i));
     const at = await choose(names[i], options.map(b => b.name)); if (at !== null) await model.assign(key, options[at].name);
   };
-  const sharedEffect = model.trackpadPanelEnabled && !model.editing && model.relayMode && !model.studio.layout;
+  const sharedEffect = model.trackpadPanelEnabled && !model.editing && model.relayMode && !model.showKeyboardEffect;
   const controls = model.relayMode ? <StudioKeyboard model={model} showEffect={!sharedEffect} /> : <View style={{ flex: 1 }}>
     <View style={{ flex: 1, padding: 8 }}>
       {model.editing && <><View style={{ flexDirection: 'row' }}>{[0, 1, 2, 3].map(i => <View style={{ flex: 1, opacity: i === model.editLayer ? 1 : .55 }} key={i}>
@@ -150,7 +151,9 @@ function Liki() {
     {Platform.OS === 'ios' && <StatusBar style="light" hidden={model.showingControls && !model.settingsVisible && model.flag('fullscreen_controls')} />}
     {unavailable ? <View style={{ padding: 20 }}><Text style={styles.text}>{unavailable}</Text></View> : model.error ? <View style={{ padding: 20 }}><Text style={styles.text}>初期化できません: {model.error}</Text>
       <Button title="再試行" onPress={() => run(() => model.initialize())} /></View> : !model.initialized ? <ActivityIndicator color={colors.accent} /> :
-      model.settingsVisible ? <Settings model={model} onBack={() => { model.settingsVisible = false; model.syncPage(); model.changed(); }} onPrivacy={privacy} choose={choose} prompt={prompt} run={run} /> : model.showingControls ? model.externalEditing ? <ExternalKeyEditor model={model} /> : controlScreen : connection}
+      model.settingsVisible ? <Settings model={model} onBack={() => { model.settingsVisible = false; model.syncPage(); model.changed(); }} onPrivacy={privacy} choose={choose} prompt={prompt} run={run} /> : model.showingControls ? model.externalEditing ? <ExternalKeyEditor model={model} /> : <View style={{ flex: 1 }}>
+        {!model.editing && model.relayMode && model.studio.activeLayer !== undefined && <KeyboardIndicators model={model} />}{controlScreen}
+      </View> : connection}
     {model.showingControls && !model.settingsVisible && !model.editing && !model.externalEditing && <View
       style={{ position: 'absolute', right: 0, top: '50%', marginTop: -54, height: 108, width: 24 + insets.right, justifyContent: 'center', alignItems: 'flex-end' }}
       accessibilityLabel="右端中央から左へスワイプしてメニューを開く"
@@ -176,6 +179,8 @@ function Liki() {
             <Text style={[styles.text, { paddingHorizontal: 12, paddingBottom: 8 }]} key={device.id}>● {device.name}</Text>) :
             <Text style={[styles.muted, { paddingHorizontal: 12, paddingBottom: 8 }]}>接続された入力デバイスはありません</Text>}
           {model.isZmkKeyboard && !!model.studio.message && <Text style={[styles.muted, { padding: 12 }]}>{model.studio.message}</Text>}
+          <Text style={[styles.muted, { padding: 12 }]}>ZMKレイヤー: {model.studio.activeLayer === undefined ? model.zmkLayerMessage || '未取得' : `L${model.studio.activeLayer}`}</Text>
+          <Button align="left" title="ZMKレイヤー連携を再接続" onPress={() => action(() => model.call('zmkLayerRetry'))} />
           <Button align="left" title="キー割り当てを編集" onPress={() => { try { model.beginExternalEdit(); setMenu(false); } catch (reason) { error(reason); } }} />
           <Button align="left" title={`配列変換: ${{ none: '変換なし', 'us-jis': 'US → JIS', 'jis-us': 'JIS → US' }[model.relayLayout]}`} onPress={() => action(async () => {
             const index = await choose('配列変換（外部キーボード → 接続先の配列）', ['変換なし', 'US → JIS', 'JIS → US']);

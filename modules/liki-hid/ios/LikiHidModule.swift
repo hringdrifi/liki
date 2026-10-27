@@ -67,6 +67,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
     private var relayLayout = "none"
     private var relayLearning = false, studioConnected = false
     private var relayRemapEnabled = true
+    private lazy var layerTransport = LikiLayerTransport { [weak self] event in self?.emit(event) }
     private lazy var studio: StudioTransport = StudioTransport { [weak self] event in
         guard let self else { return }
         if let state = event["studioState"] as? [String: Any] {
@@ -85,7 +86,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
             }
         }, changed: { [weak self] in
             guard let self else { return }; self.publish()
-            if self.relayRequested { self.studio.retry() }
+            if self.relayRequested { self.studio.retry(); self.layerTransport.retry() }
         })
     private lazy var mouseRelay = MouseRelay(connected: { [weak self] in self?.connected == true },
         speed: { [weak self] in
@@ -166,6 +167,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         func int(_ key: String) -> Int { (args[key] as? NSNumber)?.intValue ?? 0 }
         switch method {
         case "initialize":
+            layerTransport.enable(false)
             relayRemaps = try KeyboardRemapper.parse(preferences["relay_remaps"] ?? "[]")
             relayLayout = preferences["relay_layout"] ?? "none"
             applyWindowSettings()
@@ -196,6 +198,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         case "relayDiagnostics": return ["mouse": mouseRelay.diagnostics, "studio": studio.diagnostics]
         #endif
         case "studioRetry": studio.retry()
+        case "zmkLayerRetry": layerTransport.retry()
         case "relayRemaps":
             let json = args["value"] as? String ?? "[]", rules = try KeyboardRemapper.parse(json)
             relay.clear(); relayRemaps = rules; savePreferences(["relay_remaps": json])
@@ -239,6 +242,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
             let remapEnabled = args["remap"] as? Bool != false
             if relayRemapEnabled != remapEnabled { relay.clear(); relayRemapEnabled = remapEnabled }
             studio.enable(args["studio"] as? Bool ?? requested)
+            layerTransport.enable(args["studio"] as? Bool ?? requested)
         case "setting":
             let key = args["key"] as? String ?? ""
             guard settingsDefaults[key] != nil || (0...3).contains(where: { key == "layer_border_color_\($0)" }),
@@ -354,6 +358,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         } catch { promise?.reject("liki", error.localizedDescription) }
     }
     func close() {
+        layerTransport.close()
         studio.close()
         relay.close()
         mouseRelay.close()
@@ -362,5 +367,5 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         LikiAppDelegateSubscriber.orientations = .allButUpsideDown
         pickerPromise?.reject("liki", "画面が閉じられました"); pickerPromise = nil
     }
-    func background() { studio.enable(false); releaseInputs() }
+    func background() { layerTransport.enable(false); studio.enable(false); releaseInputs() }
 }

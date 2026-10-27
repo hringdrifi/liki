@@ -127,6 +127,13 @@ export function studioKeyActive(key: StudioKey, pressed: number[], consumer: num
 
 export class StudioClient {
   layout?: StudioLayout; message = ''; layer = 0; ready = false;
+  activeLayer?: number;
+  get displayLayer() { return this.activeLayer !== undefined && this.layout?.layers[this.activeLayer] ? this.activeLayer : this.layer; }
+  receiveLayer(bytes: unknown) {
+    this.activeLayer = Array.isArray(bytes) && bytes.length === 2 && bytes[0] === 1 &&
+      Number.isInteger(bytes[1]) && bytes[1] >= 0 && bytes[1] < 32 ? bytes[1] : undefined;
+    this.changed();
+  }
   busy = false; dirty = false;
   behaviors: StudioBehavior[] = [];
   private details = new Map<number, Message>();
@@ -141,6 +148,7 @@ export class StudioClient {
   reset(message = '') {
     this.locked = false;
     this.behaviors = []; this.details.clear(); this.dirty = false;
+    // Layer notifications use their own BLE service and survive a Studio reset/lock.
     this.generation++; this.ready = false; this.layout = undefined; this.layer = 0; this.message = message; this.frames = new StudioFrames();
     if (this.pending) { this.pending.reject(Error(message || 'Studio接続を終了しました')); this.pending = undefined; }
     this.changed();

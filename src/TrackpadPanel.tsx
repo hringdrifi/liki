@@ -4,7 +4,7 @@ import type { GestureResponderEvent } from 'react-native';
 import type { LikiModel } from './model';
 import { TrackpadGesture } from './gestures';
 import type { Touch } from './gestures';
-import { colors } from './Keyboard';
+import { hex } from './Keyboard';
 
 export function TrackpadPanel({ model, active }: { model: LikiModel; active: boolean }) {
   const gesture = useMemo(() => new TrackpadGesture(model), [model]);
@@ -22,7 +22,7 @@ export function TrackpadPanel({ model, active }: { model: LikiModel; active: boo
       position: { x: point.locationX, y: point.locationY }, time: point.timestamp });
   };
   return <View accessibilityLabel="トラックパッド" style={{ flex: 1, margin: 8, borderRadius: 12,
-    backgroundColor: '#1f283480', borderWidth: 1, borderColor: colors.muted }}
+    backgroundColor: '#1f283480', borderWidth: 2, borderColor: hex(model.trackpadBorderColor) }}
     onStartShouldSetResponder={() => active} onMoveShouldSetResponder={() => active} onResponderTerminationRequest={() => false}
     onTouchStart={event => touch('down', event)} onTouchMove={event => touch('move', event)}
     onTouchEnd={event => touch('up', event)} onTouchCancel={() => gesture.cancel()} />;

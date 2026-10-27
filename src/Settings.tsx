@@ -50,11 +50,11 @@ export function Settings({ model: m, onBack, onPrivacy, choose, prompt, run }: {
     <Section title="表示" />{choice('screen_orientation', '画面の向き', ['自動（端末の設定に従う）', '縦向き', '横向き', '横向き（反対向き）'])}
     {toggle('fullscreen_controls', '全画面表示', '接続後の操作画面でシステムバーを隠す。画面端からスワイプすると一時表示')}
     {toggle('keep_screen_on', '画面を常にON', 'Likiを開いている間は自動消灯しない')}
-    <Button title={`外付けキーボードのエフェクト: ${m.relayEffect === 'ripple' ? 'リップル' : 'マトリックス'}`} onPress={() => run(async () => {
-      const index = await choose('外付けキーボードのエフェクト', ['マトリックス', 'リップル']);
-      if (index !== null) await m.setRelayEffect(index === 1 ? 'ripple' : 'matrix');
+    <Button title={`外付けキーボードのエフェクト: ${{ keyboard: 'キーボード', matrix: 'マトリックス', ripple: 'リップル' }[m.relayEffect]}`} onPress={() => run(async () => {
+      const index = await choose('外付けキーボードのエフェクト', ['キーボード（ZMK Studio）', 'マトリックス', 'リップル']);
+      if (index !== null) await m.setRelayEffect((['keyboard', 'matrix', 'ripple'] as const)[index]);
     })} />
-    <Text style={styles.muted}>キーボード配列を表示していない中継画面で、キー入力に反応する表示を選びます。</Text>
+    <Text style={styles.muted}>ZMK Studio接続中も表示を切り替えられます。キーボードを選び、配置を取得できていない場合はマトリックスを表示します。</Text>
     <Section title="操作感" />{toggle('touch_vibration', 'タッチ時に振動', 'キーのタップとトラックパッドのクリック時に振動')}
     <Section title="キーボード" /><Text style={styles.text}>レイヤーごとのボタン枠の色</Text>
     {[0, 1, 2, 3].map(layer => <View key={layer} style={{ flexDirection: 'row', alignItems: 'center' }}>

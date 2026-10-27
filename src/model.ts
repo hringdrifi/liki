@@ -66,6 +66,7 @@ export class LikiModel {
   selectedName?: string; selectedAddress?: string; overrides: Data = {}; layers: Data = {}; inferred: Data = {};
   density = 1; xdpi = 160; initialized = false; editing = false; settingsVisible = false; showingControls = false;
   relayMode = false; relayPaused = false;
+  zmkLayerMessage = '';
   private resetStudioView?: () => void;
   isZmkKeyboard = false; externalEditing = false; externalEditZmk = false; relayLearning = false;
   readonly studio = new StudioClient((bytes, id, label) => this.call('studioWrite', { bytes, id, label }), () => {
@@ -85,8 +86,22 @@ export class LikiModel {
   num(key: string) { return Number(this.settings[key] ?? 0); }
   get connected() { return this.status.connected === true; }
   get relayRemaps() { return parseRelayRemaps(this.preferences.relay_remaps ?? '[]'); }
-  get relayEffect(): 'matrix' | 'ripple' { return this.preferences.relay_effect === 'ripple' ? 'ripple' : 'matrix'; }
-  async setRelayEffect(value: 'matrix' | 'ripple') {
+  get relayEffect(): 'keyboard' | 'matrix' | 'ripple' {
+    const value = this.preferences.relay_effect;
+    return value === 'matrix' || value === 'ripple' ? value : 'keyboard';
+  }
+  get showKeyboardEffect() {
+    return this.relayEffect === 'keyboard' && !!this.studio.layout &&
+      (this.studio.activeLayer === undefined || !!this.studio.layout.layers[this.studio.activeLayer]);
+  }
+  borderColorForLayer(layer: number | undefined): number {
+    return layer === undefined ? 0x657789 : this.settings.border_colors?.[layer] ?? 0x657789;
+  }
+  get trackpadBorderColor(): number {
+    const layer = this.relayMode ? this.studio.activeLayer : this.displayedLayer;
+    return this.borderColorForLayer(layer);
+  }
+  async setRelayEffect(value: 'keyboard' | 'matrix' | 'ripple') {
     await this.persist({ relay_effect: value }); this.changed();
   }
   get relayLayout(): 'none' | 'us-jis' | 'jis-us' {
@@ -173,6 +188,14 @@ export class LikiModel {
     } catch (e) { this.error = String(e); this.changed(); }
   }
   acceptStatus(status: Data) {
+    if ('zmkLayer' in status) {
+      this.zmkLayerMessage = status.zmkLayer?.message ?? '';
+      this.studio.receiveLayer(status.zmkLayer?.bytes);
+      if (status.zmkLayer?.bytes != null && this.studio.activeLayer === undefined) {
+        this.zmkLayerMessage = 'ZMKレイヤー通知の形式に対応していません'; this.changed();
+      }
+      return;
+    }
     if (status.studioBytes) { this.studio.receive(status.studioBytes); return; }
     if (status.studioState) {
       if (status.studioState.ready) {

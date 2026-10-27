@@ -45,13 +45,14 @@ internal class NativeBridge(
         context.mainExecutor.execute { onStatus(status, connected) }
     }
     private val relay: ExternalKeyboardRelay = ExternalKeyboardRelay(context, { hid.isConnected() }, hid::keyboardReport, hid::consumerReport,
-        hid::relayMouse, settings::externalMouseSpeed, { activityProvider()?.window?.decorView }, { publish(); studio.inputDevicesChanged() },
+        hid::relayMouse, settings::externalMouseSpeed, { activityProvider()?.window?.decorView }, { publish(); studio.inputDevicesChanged(); layerTransport.inputDevicesChanged() },
         { pressed, consumer -> emit(mapOf("relayInput" to mapOf("pressed" to pressed, "consumer" to consumer))) })
     private val studio: StudioTransport = StudioTransport(context) { event ->
         val state = event["studioState"] as? Map<*, *>
         if (state != null) { studioConnected = state["ready"] == true; relay.configureRemaps(apply = remapRequested && !studioConnected) }
         emit(event)
     }
+    private val layerTransport = LikiLayerTransport(context) { event -> emit(event) }
     private fun parseRemaps(json: String): Map<Int, List<Int>> {
         val values = JSONArray(json); require(values.length() <= 256)
         val result = linkedMapOf<Int, List<Int>>()
@@ -82,7 +83,7 @@ internal class NativeBridge(
         fun int(key: String) = (args[key] as? Number)?.toInt() ?: 0
         fun string(key: String) = requireNotNull(args[key] as? String)
         return when (method) {
-            "initialize" -> { hid.releaseInputs(); relay.enable(false); relayRequested = false; relay.configureRemaps(parseRemaps(preferences.getString("relay_remaps", "[]") ?: "[]")); relay.configureLayout(preferences.getString("relay_layout", "none") ?: "none"); relay.start(); applyWindowSettings(); mapOf("layout" to layouts.initial(), "preferences" to preferences.all,
+            "initialize" -> { layerTransport.enable(false); hid.releaseInputs(); relay.enable(false); relayRequested = false; relay.configureRemaps(parseRemaps(preferences.getString("relay_remaps", "[]") ?: "[]")); relay.configureLayout(preferences.getString("relay_layout", "none") ?: "none"); relay.start(); applyWindowSettings(); mapOf("layout" to layouts.initial(), "preferences" to preferences.all,
                 "settings" to settingsValues(), "bindings" to KeyBinding.options().map(::bindingMap),
                 "density" to context.resources.displayMetrics.density.toDouble(),
                 "xdpi" to context.resources.displayMetrics.xdpi.toDouble(),
@@ -93,10 +94,11 @@ internal class NativeBridge(
                 val value = string("value")
                 hid.selectTransport(value)
                 preferences.edit().putString("hid_transport", value).apply()
-                if (value == "classic") { relay.enable(false); studio.enable(false); relayRequested = false }
+                if (value == "classic") { relay.enable(false); studio.enable(false); layerTransport.enable(false); relayRequested = false }
                 publish(); status()
             }
             "studioRetry" -> { studio.retry(); null }
+            "zmkLayerRetry" -> { layerTransport.retry(); null }
             "studioWrite" -> { studio.write((args["bytes"] as? List<*>)?.map { (it as Number).toInt() } ?: emptyList(), int("id"), string("label")); null }
             "studioComplete" -> { studio.complete(int("id")); null }
             "relayRemaps" -> {
@@ -150,6 +152,7 @@ internal class NativeBridge(
                 remapRequested = args["remap"] != false
                 relay.configureRemaps(learn = args["relayLearning"] == true, apply = remapRequested && !studioConnected)
                 studio.enable(hid.transport == "ble" && (args["studio"] as? Boolean ?: requested))
+                layerTransport.enable(hid.transport == "ble" && (args["studio"] as? Boolean ?: requested))
                 applyWindowSettings(); null
             }
             else -> error("Unknown HID command: $method")
@@ -185,6 +188,7 @@ internal class NativeBridge(
         applyWindowSettings()
     }
     fun pause() {
+        layerTransport.enable(false)
         studio.enable(false)
         relay.foreground(false)
         hid.releaseInputs()
@@ -198,6 +202,7 @@ internal class NativeBridge(
         relay.foreground(resumed); relay.focus(currentActivity?.hasWindowFocus() == true)
     }
     fun detach() {
+        layerTransport.close()
         studio.close()
         pause()
         observedView?.removeOnLayoutChangeListener(layoutListener); observedView = null
