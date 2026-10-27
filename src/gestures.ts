@@ -14,6 +14,7 @@ export class Trackpad {
   touch(e: Touch, points: Map<number, Point>) {
     const m = this.model, p = e.position, time = e.time;
     if (e.kind === 'down' && points.size === 1) {
+      m.haptic();
       this.last = this.down = p; this.downTime = time;
       this.tapDragArmed = m.flag('tap_drag') && m.flag('tap_to_click') && this.lastTapTime > 0 && time - this.lastTapTime >= 1 && time - this.lastTapTime <= 350 && distance(p, this.lastTap) <= 24;
       this.remainder = zero(); this.scrollRemainder = 0; this.moved = this.dragging = this.scrolling = this.multiMoved = false;
@@ -60,10 +61,10 @@ export class Trackpad {
       clearTimeout(this.hold); if (this.scrolling) this.updateMulti(points);
       if (this.dragging) m.send('mouseUp', { button: 1 });
       else if (e.kind === 'up' && this.scrolling && !this.multiMoved && time - this.downTime < 450) {
-        if (this.maxPointers === 2 && m.flag('two_finger_right_click')) m.send('click', { button: 2 });
-        if (this.maxPointers === 3 && m.flag('three_finger_middle_click')) m.send('click', { button: 4 });
+        if (this.maxPointers === 2 && m.flag('two_finger_right_click')) m.click(2);
+        if (this.maxPointers === 3 && m.flag('three_finger_middle_click')) m.click(4);
       } else if (e.kind === 'up' && m.flag('tap_to_click') && !this.moved && !this.scrolling && time - this.downTime < 450) {
-        m.send('click', { button: 1 }); this.lastTapTime = time; this.lastTap = p;
+        m.click(1); this.lastTapTime = time; this.lastTap = p;
       }
       if (this.dragging || this.scrolling || this.moved || e.kind === 'cancel') this.lastTapTime = 0;
       this.dragging = this.scrolling = this.tapDragArmed = false; this.gesture = 0; this.starts.clear();
@@ -97,7 +98,7 @@ export class KeyboardGesture {
   setEditor(onEdit: (key: KeyShape) => void) { this.onEdit = onEdit; }
   span() { const [a, b] = [...this.points.values()]; return distance(a, b); }
   tap(key: KeyShape, layer: number) {
-    this.model.send('vibrate'); if (this.model.editing) { if (!key.ghost) this.onEdit(key); }
+    if (this.model.editing) { if (!key.ghost) this.onEdit(key); }
     else void this.model.tap(key, layer).catch(this.model.onError);
   }
   touch(e: Touch) {
@@ -107,14 +108,17 @@ export class KeyboardGesture {
       this.down = this.last = e.position; this.moved = this.pinching = false;
       this.selected = g.hit(e.position); this.trackpadTouch = this.selected?.ghost === true && !m.editing;
       if (this.trackpadTouch) { this.trackpad.touch(e, this.points); return; }
+      if (this.selected && !this.selected.ghost) m.haptic();
       if (!m.editing && this.selected && m.bindingFor(this.selected)?.action === 'MOMENTARY') {
-        this.momentary = true; this.momentaryPointer = e.id; m.momentaryDown(this.selected); m.send('vibrate');
+        this.momentary = true; this.momentaryPointer = e.id; m.momentaryDown(this.selected);
       }
       return;
     }
     if (this.momentary) {
       if (e.kind === 'down') {
-        const key = g.hit(e.position); if (key && !key.ghost && m.bindingFor(key)?.action !== 'MOMENTARY') this.chords.set(e.id, { key, layer: m.layer, down: e.position, moved: false });
+        const key = g.hit(e.position); if (key && !key.ghost && m.bindingFor(key)?.action !== 'MOMENTARY') {
+          m.haptic(); this.chords.set(e.id, { key, layer: m.layer, down: e.position, moved: false });
+        }
       } else if (e.kind === 'move') {
         const touch = this.chords.get(e.id); if (touch && distance(e.position, touch.down) > 8) touch.moved = true;
       } else if (e.kind === 'up') {

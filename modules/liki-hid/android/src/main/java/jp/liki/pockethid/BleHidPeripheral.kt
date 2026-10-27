@@ -26,6 +26,8 @@ internal class BleHidPeripheral(private val context: Context, private val change
     private var peer: BluetoothDevice? = null
     private val pendingConnections = linkedSetOf<BluetoothDevice>()
     private var protocol = 1
+    var keyboardLeds: Int? = null
+        private set
     private var suspended = false
     private var advertiseCallback: AdvertiseCallback? = null
     private var wantsAdvertising = false
@@ -350,7 +352,11 @@ internal class BleHidPeripheral(private val context: Context, private val change
                 protocolMode -> { protocol = value[0].toInt(); clearWaitingReports(); resetReports() }
                 controlPoint -> { suspended = value[0].toInt() == 0; clearWaitingReports(); resetReports()
                     changed(connectionMessage()) }
-                else -> { values[output] = value.copyOf(); values[bootOutput] = value.copyOf() }
+                else -> {
+                    values[output] = value.copyOf(); values[bootOutput] = value.copyOf()
+                    keyboardLeds = value[0].toInt() and 0x1f
+                    changed(connectionMessage())
+                }
             }
             if (responseNeeded) reply(device, requestId, status)
         }
@@ -456,6 +462,7 @@ internal class BleHidPeripheral(private val context: Context, private val change
     }
 
     private fun resetPeer() {
+        keyboardLeds = null
         peer = null; encrypted = false; subscriptions.clear(); protocol = 1; suspended = false
         notifications.clear(); sending = false; handler.removeCallbacks(notificationTimeout); resetReports()
     }

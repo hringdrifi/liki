@@ -61,7 +61,7 @@ export function StudioKeyboard({ model, selectedKey, onSelectKey, onSelectLayer,
               const lines = binding.label.split(' / '), size = Math.min(.22, (key.w - .12) / Math.max(2, ...lines.map(l => l.length * .6)));
               return <G key={key.index} transform={`rotate(${key.rotation},${key.rx},${key.ry})`}>
                 <Rect x={key.x + .025} y={key.y + .025} width={key.w - .05} height={key.h - .05} rx={.08}
-                  fill={active ? '#24736d' : colors.surface} stroke={!onSelectKey && client.activeLayer !== undefined ? hex(model.borderColorForLayer(client.activeLayer)) : active ? colors.accent : '#657789'} strokeWidth={.025} />
+                  fill={active ? '#24736d' : colors.surface} stroke={!onSelectKey && (model.shiftActive || client.activeLayer !== undefined) ? hex(model.borderColorForLayer(client.activeLayer)) : active ? colors.accent : '#657789'} strokeWidth={.025} />
                 {lines.map((line, i) => <SvgText key={i} x={key.x + key.w / 2} y={key.y + key.h / 2 + size * (.3 + (i - (lines.length - 1) / 2) * 1.2)}
                   fill={colors.text} fontSize={size} textAnchor="middle">{line}</SvgText>)}
               </G>;

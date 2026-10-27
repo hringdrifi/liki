@@ -13,6 +13,7 @@ const options = [binding('A', 4), binding('B', 5), binding('Ctrl', 0, 1), bindin
 async function fixture() {
   const calls: { method: string; args: Data }[] = [], preferences: Data = {};
   const settings: Data = { sticky_modifiers: true, kle_json_key_labels: true, pinch_zoom: true, drag_move_keyboard: true,
+    border_colors: [0x657789, 0x71a9e8, 0xedb369, 0xbe9ce7],
     key_pitch_mm: 0, auto_key_scale_px: 0, pointer_speed: 1, scroll_speed: 1, tap_to_click: true, hold_to_drag: true, tap_drag: true,
     two_finger_scroll: true, trackpad_pinch_zoom: true, two_finger_right_click: true, three_finger_middle_click: true };
   const native: Backend = {
@@ -43,6 +44,59 @@ test('sticky modifiers combine, send with a key and clear', async () => {
 test('nonsticky modifiers use standalone reports', async () => {
   const { m, sent } = await fixture(); m.settings.sticky_modifiers = false; m.overrides[0] = 'Shift'; await m.tap(m.keys[0]); await m.tap(m.keys[1]);
   assert.deepEqual(sent('key'), [{ modifiers: 2, code: 0 }, { modifiers: 0, code: 5 }]);
+});
+
+test('Shift state follows sticky modifiers and both external Shift keys', async () => {
+  const { m } = await fixture(); m.overrides[0] = 'Shift';
+  assert.equal(m.shiftActive, false);
+  await m.tap(m.keys[0]); assert.equal(m.shiftActive, true);
+  await m.tap(m.keys[0]); assert.equal(m.shiftActive, false);
+  await m.tap(m.keys[0]); await m.tap(m.keys[1]); assert.equal(m.shiftActive, false);
+  m.relayMode = true;
+  for (const code of [0xe1, 0xe5]) {
+    m.acceptStatus({ relayInput: { pressed: [code], consumer: 0 } }); assert.equal(m.shiftActive, true);
+  }
+  m.acceptStatus({ relayInput: { pressed: [0xe0], consumer: 0 } }); assert.equal(m.shiftActive, false);
+});
+
+test('Shift border overrides every layer and the trackpad, restores on release and saves a custom color', async () => {
+  const { m, sent } = await fixture();
+  m.settings.border_colors = [0x657789, 0x71a9e8, 0xedb369, 0xbe9ce7];
+  assert.equal(m.shiftBorderColor, 0x80cbc4);
+  assert.ok(!m.settings.border_colors.includes(m.shiftBorderColor));
+  for (const layer of [0, 1, 2, 3]) {
+    m.layer = layer; m.modifiers = 0;
+    assert.equal(m.borderColorForLayer(layer), m.settings.border_colors[layer]);
+    assert.equal(m.trackpadBorderColor, m.settings.border_colors[layer]);
+    m.modifiers = 2;
+    assert.equal(m.borderColorForLayer(layer), m.shiftBorderColor);
+    assert.equal(m.trackpadBorderColor, m.shiftBorderColor);
+  }
+  await m.setSetting('shift_border_color', 0xffe87c73 | 0);
+  assert.deepEqual(sent('setting').at(-1), { key: 'shift_border_color', value: 0xffe87c73 | 0 });
+  assert.equal(m.trackpadBorderColor, 0xffe87c73 | 0);
+  m.modifiers = 0; assert.equal(m.trackpadBorderColor, m.settings.border_colors[3]);
+  m.relayMode = true; m.studio.activeLayer = 1; m.relayPressed = [0xe5];
+  assert.equal(m.trackpadBorderColor, m.shiftBorderColor);
+  assert.equal(m.borderColorForLayer(undefined), m.shiftBorderColor);
+  m.relayPressed = []; assert.equal(m.trackpadBorderColor, m.settings.border_colors[1]);
+  m.relayPressed = [0xe1]; m.externalEditing = true;
+  assert.equal(m.borderColorForLayer(1), m.settings.border_colors[1]);
+  m.externalEditing = false; m.relayMode = false; m.modifiers = 2; m.editing = true; m.editLayer = 2;
+  assert.equal(m.trackpadBorderColor, m.settings.border_colors[2]);
+});
+
+test('lock indicators use host LED reports and remain unknown without a valid connected report', async () => {
+  const { m } = await fixture();
+  for (const value of [undefined, null, -1, 32, '2', 1.5]) {
+    m.acceptStatus({ connected: true, keyboardLeds: value }); assert.equal(m.keyboardLeds, undefined);
+  }
+  for (const value of [0, 1, 2, 4, 7, 31]) {
+    m.acceptStatus({ connected: true, keyboardLeds: value }); assert.equal(m.keyboardLeds, value);
+  }
+  m.acceptStatus({ relayInput: { pressed: [57], consumer: 0 } }); assert.equal(m.keyboardLeds, 31);
+  m.acceptStatus({ connected: false, keyboardLeds: 2 }); assert.equal(m.keyboardLeds, undefined);
+  m.acceptStatus({ connected: true }); assert.equal(m.keyboardLeds, undefined);
 });
 test('all three extended layers toggle, inherit, override and return to zero', async () => {
   const { m, sent } = await fixture();
@@ -102,6 +156,70 @@ test('viewport fitting preserves physical size on rotation and reset fits the ne
   await m.resetView(); assert.ok(Math.abs(m.geometry!.base - 620 / 3) < 1e-8);
 });
 const pointer = (g: KeyboardGesture, kind: 'down' | 'move' | 'up' | 'cancel', id: number, p: Point, time: number) => g.touch({ kind, id, position: p, time });
+
+test('contact haptics respect the saved toggle and use the three Impact strengths without vibrating on clicks', async () => {
+  const { m, sent } = await fixture();
+  m.haptic(); assert.deepEqual(sent('haptic'), []);
+  m.settings.touch_vibration = true;
+  for (const [strength, style] of ['light', 'medium', 'heavy'].entries()) {
+    m.settings.touch_vibration_strength = strength;
+    m.haptic(); assert.deepEqual(sent('haptic').at(-1), { style });
+    m.click(1); assert.equal(sent('haptic').length, strength + 1);
+  }
+  m.settings.touch_vibration = false; m.click(1);
+  assert.equal(sent('haptic').length, 3); assert.equal(sent('click').length, 4);
+});
+
+test('keyboard contact vibrates immediately without a second vibration on release', async () => {
+  const { m, sent, calls } = await fixture(); m.settings.touch_vibration = true;
+  m.geometry!.width = 300; m.geometry!.height = 100; m.geometry!.base = 100;
+  const g = new KeyboardGesture(m, () => {}), p = { x: 50, y: 50 };
+  pointer(g, 'down', 1, p, 1000);
+  assert.deepEqual(sent('haptic'), [{ style: 'medium' }]); assert.deepEqual(sent('key'), []);
+  pointer(g, 'up', 1, p, 1100);
+  assert.deepEqual(sent('haptic'), [{ style: 'medium' }]);
+  assert.deepEqual(sent('key'), [{ modifiers: 0, code: 4 }]);
+  calls.length = 0;
+  pointer(g, 'down', 1, p, 2000); pointer(g, 'move', 1, { x: 80, y: 50 }, 2050); pointer(g, 'up', 1, { x: 80, y: 50 }, 2100);
+  assert.deepEqual(sent('haptic'), [{ style: 'medium' }]); assert.deepEqual(sent('key'), []);
+  calls.length = 0;
+  pointer(g, 'down', 1, { x: 80, y: 50 }, 3000); pointer(g, 'cancel', 1, { x: 80, y: 50 }, 3100);
+  assert.deepEqual(sent('haptic'), [{ style: 'medium' }]); assert.deepEqual(sent('key'), []); g.cancel();
+});
+
+test('one, two and three finger trackpad taps only vibrate on initial contact', async () => {
+  const { m, sent, calls } = await fixture(); m.settings.touch_vibration = true;
+  const g = new TrackpadGesture(m);
+  for (const count of [1, 2, 3]) {
+    calls.length = 0;
+    for (let id = 1; id <= count; id++) g.touch({ kind: 'down', id, position: { x: id * 20, y: 30 }, time: count * 1000 });
+    assert.deepEqual(sent('haptic'), [{ style: 'medium' }]);
+    for (let id = count; id >= 1; id--) g.touch({ kind: 'up', id, position: { x: id * 20, y: 30 }, time: count * 1000 + 100 });
+    assert.deepEqual(sent('haptic'), [{ style: 'medium' }]);
+    assert.deepEqual(sent('click'), [{ button: [1, 2, 4][count - 1] }]);
+  }
+  g.cancel();
+});
+
+test('trackpad movement, scroll, hold-to-drag, cancellation and disabled taps do not confirm a tap', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const scenario of ['move', 'scroll', 'hold', 'cancel', 'disabled']) {
+    const { m, sent } = await fixture(); m.settings.touch_vibration = true;
+    const g = new TrackpadGesture(m);
+    const touch = (kind: 'down' | 'move' | 'up' | 'cancel', id: number, x: number, y: number, time: number) => g.touch({ kind, id, position: { x, y }, time });
+    if (scenario === 'disabled') m.settings.tap_to_click = false;
+    touch('down', 1, 10, 80, 1000);
+    if (scenario === 'move') touch('move', 1, 40, 80, 1050);
+    if (scenario === 'scroll') {
+      touch('down', 2, 50, 80, 1000); g.points.set(2, { x: 50, y: 30 });
+      touch('move', 1, 10, 30, 1100); touch('up', 2, 50, 30, 1150);
+    }
+    if (scenario === 'hold') t.mock.timers.tick(451);
+    touch(scenario === 'cancel' ? 'cancel' : 'up', 1, scenario === 'move' ? 40 : 10, scenario === 'scroll' ? 30 : 80, 1200);
+    assert.deepEqual(sent('haptic'), [{ style: 'medium' }], scenario);
+    assert.deepEqual(sent('click'), [], scenario); g.cancel();
+  }
+});
 
 test('pinch uses the same 3–24 mm pitch limits for automatic and manual sizing', async () => {
   for (const manual of [false, true]) {

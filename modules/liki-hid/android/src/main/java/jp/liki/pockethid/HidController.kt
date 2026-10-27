@@ -65,6 +65,7 @@ internal class HidController(private val context: Context, private val settings:
     fun disconnect() { releaseInputs(); if (transport == "classic") classic.disconnect() else hid.disconnect() }
     fun isConnected(): Boolean = host != null
     fun connectedAddress(): String? = host?.address
+    fun keyboardLeds(): Int? = if (!isConnected()) null else if (transport == "classic") classic.keyboardLeds else hid.keyboardLeds
 
     fun keyboardReport(data: ByteArray) { host?.let { sendReport(it, HidReports.KEYBOARD_ID, data) } }
     fun consumerReport(usage: Int) { host?.let { sendReport(it, HidReports.CONSUMER_ID, HidReports.consumer(usage)) } }

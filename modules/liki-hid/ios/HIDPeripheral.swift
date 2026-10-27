@@ -16,7 +16,7 @@ final class HIDPeripheral: NSObject, ObservableObject {
     /// broadcasts skip inactive hosts
     @Published private(set) var inactiveCentrals: Set<UUID> = []
     @Published private(set) var connectedCentrals: Set<UUID> = []
-    @Published private(set) var keyboardLEDs: KeyboardLEDs = []
+    @Published private(set) var keyboardLEDs: KeyboardLEDs?
     @Published private(set) var lastError: String?
     @Published private(set) var batteryLevel: UInt8 = 100
 
@@ -58,6 +58,7 @@ final class HIDPeripheral: NSObject, ObservableObject {
     }
 
     private func clearReports() {
+        keyboardLEDs = nil
         cachedReports = [ReportID.mouse.rawValue: MouseReport.zero.data, ReportID.keyboard.rawValue: KeyboardReport.zero.data,
                          ReportID.systemControl.rawValue: SystemControlReport.zero.data, ReportID.consumerControl.rawValue: ConsumerReport.zero.data]
         pendingBroadcasts.removeAll()

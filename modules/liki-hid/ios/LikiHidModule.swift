@@ -103,6 +103,8 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
     private let settingsDefaults: [String: Any] = [
         "sticky_modifiers": true, "kle_json_key_labels": true, "pinch_zoom": true, "drag_move_keyboard": true,
         "keep_screen_on": false, "fullscreen_controls": false, "touch_vibration": false, "screen_orientation": 0,
+        "touch_vibration_strength": 1,
+        "shift_border_color": 0x80cbc4 | -16777216,
         "key_pitch_mm": 0.0, "auto_key_scale_px": 0.0, "tap_to_click": true, "hold_to_drag": true,
         "two_finger_scroll": true, "trackpad_pinch_zoom": true, "two_finger_right_click": true, "tap_drag": true,
         "three_finger_middle_click": true, "pointer_speed": 1.0, "pointer_send_mode": 2,
@@ -121,7 +123,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
     private var storedSettings: [String: Any] { defaults.dictionary(forKey: "liki.expo_settings") ?? [:] }
     private var settings: [String: Any] {
         var result = settingsDefaults.merging(storedSettings) { _, saved in saved }
-        result["border_colors"] = [0x657789, 0x80cbc4, 0xedb369, 0xbe9ce7].enumerated().map { index, color in
+        result["border_colors"] = [0x657789, 0x71a9e8, 0xedb369, 0xbe9ce7].enumerated().map { index, color in
             storedSettings["layer_border_color_\(index)"] as? Int ?? (color | -16777216)
         }
         return result
@@ -140,6 +142,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         else if central?.state == .poweredOn { message = "準備完了。BLEペアリング待機を押してください" }
         else { message = "Bluetoothを準備中…" }
         return ["message": message, "connected": connected, "connecting": false, "cancelling": false,
+                "keyboardLeds": connected ? hid.keyboardLEDs.map { Int($0.rawValue) } : nil,
                 "restoring": false, "registered": hid.isHIDServiceAdded,
                 "relaySupported": true, "remapSupported": true, "keyboards": relay.devices + mouseRelay.devices,
                 "devices": [], "address": hid.subscribedCentrals.keys.first?.uuidString,
@@ -230,8 +233,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         case "mouseDown": flushMouse(); buttons |= int("button"); mouse(0, 0, 0)
         case "mouseUp": flushMouse(); buttons &= ~int("button"); mouse(0, 0, 0)
         case "click":
-            flushMouse(); buttons |= int("button"); mouse(0, 0, 0); buttons &= ~int("button"); mouse(0, 0, 0); vibrate()
-        case "vibrate": vibrate()
+            flushMouse(); buttons |= int("button"); mouse(0, 0, 0); buttons &= ~int("button"); mouse(0, 0, 0)
         case "page":
             controls = args["controls"] as? Bool ?? false; settingsPage = args["settings"] as? Bool ?? false
             let requested = args["relay"] as? Bool == true && controls && !settingsPage
@@ -249,7 +251,9 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
                   let value = args["value"] as? NSNumber, value.doubleValue.isFinite else {
                 throw NSError(domain: "Liki", code: 3, userInfo: [NSLocalizedDescriptionKey: "設定値が不正です"])
             }
-            var saved = storedSettings; saved[key] = value; defaults.set(saved, forKey: "liki.expo_settings")
+            var saved = storedSettings
+            saved[key] = key == "touch_vibration_strength" ? NSNumber(value: min(2, max(0, value.intValue))) : value
+            defaults.set(saved, forKey: "liki.expo_settings")
             applyWindowSettings(); return settings
         default: throw NSError(domain: "Liki", code: 4, userInfo: [NSLocalizedDescriptionKey: "Unknown HID command: \(method)"])
         }
@@ -321,7 +325,6 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         generation += 1; nextKeyTime = .distantPast; mouseWork?.cancel(); mouseWork = nil; pendingX = 0; pendingY = 0; buttons = 0
         hid.sendKeyboard(modifiers: 0, code: 0); hid.sendConsumer(usage: 0); hid.sendMouse(.zero)
     }
-    private func vibrate() { if settings["touch_vibration"] as? Bool == true { UIImpactFeedbackGenerator(style: .light).impactOccurred() } }
     private func applyWindowSettings() {
         UIApplication.shared.isIdleTimerDisabled = settings["keep_screen_on"] as? Bool ?? false
         let orientation = controls ? settings["screen_orientation"] as? Int ?? 0 : 0

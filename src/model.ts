@@ -85,6 +85,11 @@ export class LikiModel {
   flag(key: string) { return this.settings[key] === true; }
   num(key: string) { return Number(this.settings[key] ?? 0); }
   get connected() { return this.status.connected === true; }
+  get shiftActive() { return this.relayMode ? this.relayPressed.some(code => code === 0xe1 || code === 0xe5) : (this.modifiers & 0x22) !== 0; }
+  get keyboardLeds(): number | undefined {
+    const value = this.status.keyboardLeds;
+    return this.connected && Number.isInteger(value) && value >= 0 && value <= 31 ? value : undefined;
+  }
   get relayRemaps() { return parseRelayRemaps(this.preferences.relay_remaps ?? '[]'); }
   get relayEffect(): 'keyboard' | 'matrix' | 'ripple' {
     const value = this.preferences.relay_effect;
@@ -94,7 +99,9 @@ export class LikiModel {
     return this.relayEffect === 'keyboard' && !!this.studio.layout &&
       (this.studio.activeLayer === undefined || !!this.studio.layout.layers[this.studio.activeLayer]);
   }
+  get shiftBorderColor(): number { return this.settings.shift_border_color ?? 0x80cbc4; }
   borderColorForLayer(layer: number | undefined): number {
+    if (!this.editing && !this.externalEditing && this.shiftActive) return this.shiftBorderColor;
     return layer === undefined ? 0x657789 : this.settings.border_colors?.[layer] ?? 0x657789;
   }
   get trackpadBorderColor(): number {
@@ -133,6 +140,10 @@ export class LikiModel {
     this.syncPage();
   }
   get trackpadPanelEnabled() { return this.preferences.trackpad_panel_enabled === 'true'; }
+  get indicatorsVisible() { return this.preferences.indicators_visible !== 'false'; }
+  async setIndicatorsVisible(visible: boolean) {
+    await this.persist({ indicators_visible: visible ? null : 'false' }); this.changed();
+  }
   get trackpadPanelSize() {
     const size = Number(this.preferences.trackpad_panel_size ?? 33);
     return Number.isFinite(size) ? clamp(size, TRACKPAD_PANEL_MIN_PERCENT, TRACKPAD_PANEL_MAX_PERCENT) : 33;
@@ -159,6 +170,12 @@ export class LikiModel {
   }
   call(method: string, args: Data = {}) { return this.native.invoke(method, args); }
   send(method: string, args: Data = {}) { void this.call(method, args).catch(this.onError); }
+  haptic() {
+    if (!this.flag('touch_vibration')) return;
+    const strength = clamp(Math.trunc(Number(this.settings.touch_vibration_strength ?? 1)), 0, 2);
+    this.send('haptic', { style: ['light', 'medium', 'heavy'][strength] });
+  }
+  click(button: number) { this.send('click', { button }); }
   changed() { this.saveSession(); this.listeners.forEach(fn => fn()); }
   saveSession() {
     if (!this.initialized) return;

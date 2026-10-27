@@ -152,7 +152,7 @@ function Liki() {
     {unavailable ? <View style={{ padding: 20 }}><Text style={styles.text}>{unavailable}</Text></View> : model.error ? <View style={{ padding: 20 }}><Text style={styles.text}>初期化できません: {model.error}</Text>
       <Button title="再試行" onPress={() => run(() => model.initialize())} /></View> : !model.initialized ? <ActivityIndicator color={colors.accent} /> :
       model.settingsVisible ? <Settings model={model} onBack={() => { model.settingsVisible = false; model.syncPage(); model.changed(); }} onPrivacy={privacy} choose={choose} prompt={prompt} run={run} /> : model.showingControls ? model.externalEditing ? <ExternalKeyEditor model={model} /> : <View style={{ flex: 1 }}>
-        {!model.editing && model.relayMode && model.studio.activeLayer !== undefined && <KeyboardIndicators model={model} />}{controlScreen}
+        {!model.editing && model.indicatorsVisible && <KeyboardIndicators model={model} />}{controlScreen}
       </View> : connection}
     {model.showingControls && !model.settingsVisible && !model.editing && !model.externalEditing && <View
       style={{ position: 'absolute', right: 0, top: '50%', marginTop: -54, height: 108, width: 24 + insets.right, justifyContent: 'center', alignItems: 'flex-end' }}
