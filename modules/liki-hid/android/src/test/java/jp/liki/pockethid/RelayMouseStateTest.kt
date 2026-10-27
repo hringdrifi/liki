@@ -4,6 +4,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RelayMouseStateTest {
+    @Test fun speedScalesMotionBeforeRoundingAndLeavesWheelAndButtonsUnchanged() {
+        var speed = .5f
+        val state = RelayMouseState { speed }
+        assertEquals(listOf(RelayMouseState.Report(1, 0, 0, 1)), state.update(1, 1, 1f, -1f, 1f))
+        assertEquals(listOf(RelayMouseState.Report(1, 1, -1)), state.update(1, 1, 1f, -1f))
+        speed = 3f
+        val reports = state.update(1, 1, 100f, -100f, 1f)
+        assertEquals(300, reports.sumOf { it.x }); assertEquals(-300, reports.sumOf { it.y })
+        assertEquals(1, reports.sumOf { it.wheel })
+        assertTrue(reports.all { it.buttons == 1 && it.x in -127..127 && it.y in -127..127 })
+    }
+
     @Test fun largeDeltasAreSplitWithoutLosingDistanceOrButtons() {
         val reports = RelayMouseState().update(1, 3, 400f, -260f, 130f)
         assertEquals(400, reports.sumOf { it.x }); assertEquals(-260, reports.sumOf { it.y })

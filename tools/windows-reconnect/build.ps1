@@ -21,7 +21,7 @@ $references = @(
 $common = @('/nologo', '/langversion:5', '/optimize+', '/utf8output') + ($references | ForEach-Object { '/reference:' + $_ })
 $sources = @('Settings.cs', 'DeviceConnection.cs', 'Program.cs') | ForEach-Object { Join-Path $source $_ }
 $exe = Join-Path $output 'LikiReconnect.exe'
-& $compiler @common /target:winexe "/out:$exe" @sources
+& $compiler @common /target:winexe "/win32icon:$(Join-Path $source 'liki.ico')" "/out:$exe" @sources
 if ($LASTEXITCODE -ne 0) { throw 'ビルドに失敗しました。' }
 if ($Test) {
     $tests = Join-Path $output 'LikiReconnect.Tests.exe'

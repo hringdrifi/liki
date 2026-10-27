@@ -138,20 +138,33 @@ internal class BleHidPeripheral(private val context: Context, private val change
 
     private fun acceptPendingConnections() {
         if (!isReady || !wantsAdvertising) return
-        val connections = pendingConnections.toList()
+        // cancelConnection may leave an OS-owned link alive, with no new connected callback.
+        val linked = manager?.getConnectedDevices(BluetoothProfile.GATT_SERVER).orEmpty()
+        encryptedPeers.retainAll(linked.map { it.address }.toSet())
+        val connections = (pendingConnections + linked).toList()
         pendingConnections.clear()
         connections.forEach { acceptConnection(it) }
     }
 
-    private fun acceptConnection(device: BluetoothDevice) {
-        if (peer != null && peer != device) { server?.cancelConnection(device); return }
-        if (peer == device) return
+    private fun acceptConnection(device: BluetoothDevice, hidRequest: Boolean = false): Boolean {
+        if (!isReady || !wantsAdvertising) return false
+        if (peer != null) return peer == device
+        val restored = savedSubscriptions.restore(device.address, device.bondState == BluetoothDevice.BOND_BONDED)
+        // Android also reports links to keyboards/mice owned by its HID Host. A link alone
+        // does not identify our client; require a HID request or a previous subscription.
+        if (!hidRequest && restored.isEmpty()) return false
         resetPeer(); peer = device; stopAdvertising()
         encrypted = device.address in encryptedPeers
-        val restored = savedSubscriptions.restore(device.address, device.bondState == BluetoothDevice.BOND_BONDED)
         subscriptions.addAll(subscriptionIds.filterValues { it in restored }.keys)
         Log.d("LikiBle", "restored subscriptions=${subscriptions.size} encrypted=$encrypted")
         changed(connectionMessage())
+        return true
+    }
+
+    private fun acceptRequest(device: BluetoothDevice, characteristic: BluetoothGattCharacteristic): Boolean {
+        if (!isReady || !wantsAdvertising || (peer != null && peer != device)) return false
+        // Device information and battery reads must not reserve the HID connection.
+        return characteristic.service.uuid != uuid(0x1812) || acceptConnection(device, hidRequest = true)
     }
 
     private fun startAdvertising() {
@@ -276,7 +289,7 @@ internal class BleHidPeripheral(private val context: Context, private val change
         }
 
         override fun onCharacteristicReadRequest(device: BluetoothDevice, requestId: Int, offset: Int, characteristic: BluetoothGattCharacteristic) = dispatch {
-            if (device != peer) { reply(device, requestId, BluetoothGatt.GATT_FAILURE); return@dispatch }
+            if (!acceptRequest(device, characteristic)) { reply(device, requestId, BluetoothGatt.GATT_FAILURE); return@dispatch }
             if (characteristic.permissions and BluetoothGattCharacteristic.PERMISSION_READ_ENCRYPTED != 0) markEncrypted()
             val data = when (characteristic) {
                 battery -> byteArrayOf(context.getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).coerceIn(0, 100).toByte())
@@ -293,7 +306,7 @@ internal class BleHidPeripheral(private val context: Context, private val change
                 uuid(0x2908) -> descriptor.value
                 else -> null
             }
-            if (device == peer) {
+            if (acceptRequest(device, descriptor.characteristic)) {
                 if (descriptor.uuid == uuid(0x2902)) markEncrypted()
                 read(device, requestId, offset, data)
             } else reply(device, requestId, BluetoothGatt.GATT_FAILURE)
@@ -302,7 +315,7 @@ internal class BleHidPeripheral(private val context: Context, private val change
         override fun onDescriptorWriteRequest(device: BluetoothDevice, requestId: Int, descriptor: BluetoothGattDescriptor,
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray) = dispatch {
             val status = when {
-                device != peer -> BluetoothGatt.GATT_FAILURE
+                !acceptRequest(device, descriptor.characteristic) -> BluetoothGatt.GATT_FAILURE
                 preparedWrite -> BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED
                 offset != 0 -> BluetoothGatt.GATT_INVALID_OFFSET
                 descriptor.uuid != uuid(0x2902) -> BluetoothGatt.GATT_WRITE_NOT_PERMITTED
@@ -324,7 +337,7 @@ internal class BleHidPeripheral(private val context: Context, private val change
         override fun onCharacteristicWriteRequest(device: BluetoothDevice, requestId: Int, characteristic: BluetoothGattCharacteristic,
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray) = dispatch {
             val status = when {
-                device != peer -> BluetoothGatt.GATT_FAILURE
+                !acceptRequest(device, characteristic) -> BluetoothGatt.GATT_FAILURE
                 preparedWrite -> BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED
                 offset != 0 -> BluetoothGatt.GATT_INVALID_OFFSET
                 characteristic !in listOf(output, bootOutput, protocolMode, controlPoint) -> BluetoothGatt.GATT_WRITE_NOT_PERMITTED
@@ -410,6 +423,7 @@ internal class BleHidPeripheral(private val context: Context, private val change
     // Android only delivers access to these encrypted attributes after link encryption succeeds.
     // This also confirms security on Android versions without ACTION_ENCRYPTION_CHANGE.
     private fun markEncrypted() {
+        peer?.let { encryptedPeers.add(it.address) }
         if (encrypted) return
         encrypted = true
         if (connectedDevice != null) changed(connectionMessage())
@@ -451,7 +465,7 @@ internal class BleHidPeripheral(private val context: Context, private val change
         pendingConnections.toList().forEach { server?.cancelConnection(it) }
         pendingConnections.clear()
         val device = peer
-        if (device != null) encryptedPeers.remove(device.address)
+        // Keep verified link security until Android reports disconnection/encryption loss.
         resetPeer()
         if (device != null) server?.cancelConnection(device)
         changed("切断しました。BLEペアリング待機から再接続できます")

@@ -14,6 +14,8 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
 import expo.modules.kotlin.Promise
 import jp.liki.hid.R
 import org.json.JSONArray
@@ -43,7 +45,7 @@ internal class NativeBridge(
         context.mainExecutor.execute { onStatus(status, connected) }
     }
     private val relay: ExternalKeyboardRelay = ExternalKeyboardRelay(context, { hid.isConnected() }, hid::keyboardReport, hid::consumerReport,
-        hid::relayMouse, { activityProvider()?.window?.decorView }, { publish(); if (relayRequested) studio.retry() },
+        hid::relayMouse, settings::externalMouseSpeed, { activityProvider()?.window?.decorView }, { publish(); studio.inputDevicesChanged() },
         { pressed, consumer -> emit(mapOf("relayInput" to mapOf("pressed" to pressed, "consumer" to consumer))) })
     private val studio: StudioTransport = StudioTransport(context) { event ->
         val state = event["studioState"] as? Map<*, *>
@@ -80,7 +82,7 @@ internal class NativeBridge(
         fun int(key: String) = (args[key] as? Number)?.toInt() ?: 0
         fun string(key: String) = requireNotNull(args[key] as? String)
         return when (method) {
-            "initialize" -> { hid.releaseInputs(); relay.enable(false); relayRequested = false; relay.configureRemaps(parseRemaps(preferences.getString("relay_remaps", "[]") ?: "[]")); relay.start(); applyWindowSettings(); mapOf("layout" to layouts.initial(), "preferences" to preferences.all,
+            "initialize" -> { hid.releaseInputs(); relay.enable(false); relayRequested = false; relay.configureRemaps(parseRemaps(preferences.getString("relay_remaps", "[]") ?: "[]")); relay.configureLayout(preferences.getString("relay_layout", "none") ?: "none"); relay.start(); applyWindowSettings(); mapOf("layout" to layouts.initial(), "preferences" to preferences.all,
                 "settings" to settingsValues(), "bindings" to KeyBinding.options().map(::bindingMap),
                 "density" to context.resources.displayMetrics.density.toDouble(),
                 "xdpi" to context.resources.displayMetrics.xdpi.toDouble(),
@@ -95,10 +97,15 @@ internal class NativeBridge(
                 publish(); status()
             }
             "studioRetry" -> { studio.retry(); null }
-            "studioWrite" -> { studio.write((args["bytes"] as? List<*>)?.map { (it as Number).toInt() } ?: emptyList()); null }
+            "studioWrite" -> { studio.write((args["bytes"] as? List<*>)?.map { (it as Number).toInt() } ?: emptyList(), int("id"), string("label")); null }
+            "studioComplete" -> { studio.complete(int("id")); null }
             "relayRemaps" -> {
                 val json = string("value"); val rules = parseRemaps(json)
                 relay.configureRemaps(rules); preferences.edit().putString("relay_remaps", json).apply(); null
+            }
+            "relayLayout" -> {
+                val value = string("value")
+                relay.configureLayout(value); preferences.edit().putString("relay_layout", value).apply(); null
             }
             "ready" -> { ensureReady(); null }
             "discoverable" -> { discoverable(); null }
@@ -185,8 +192,10 @@ internal class NativeBridge(
     fun attach(activity: () -> Activity?, events: (Map<String, Any?>) -> Unit) {
         activityProvider = activity; emit = events
         relay.start()
-        val focused = activity()?.hasWindowFocus() == true
-        relay.foreground(focused); relay.focus(focused)
+        val currentActivity = activity()
+        // During startup the resumed activity may not have window focus yet.
+        val resumed = (currentActivity as? LifecycleOwner)?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true
+        relay.foreground(resumed); relay.focus(currentActivity?.hasWindowFocus() == true)
     }
     fun detach() {
         studio.close()
@@ -263,6 +272,7 @@ internal class NativeBridge(
         "two_finger_scroll" to settings.twoFingerScroll(), "trackpad_pinch_zoom" to settings.trackpadPinchZoom(),
         "two_finger_right_click" to settings.twoFingerRightClick(), "tap_drag" to settings.tapDrag(),
         "three_finger_middle_click" to settings.threeFingerMiddleClick(), "pointer_speed" to settings.pointerSpeed().toDouble(),
+        "external_mouse_speed" to settings.externalMouseSpeed().toDouble(),
         "pointer_send_mode" to settings.pointerSendMode(), "scroll_speed" to settings.scrollSpeed().toDouble(),
         "reverse_scroll" to settings.reverseScroll(), "border_colors" to (0..3).map(settings::layerBorderColor))
 
@@ -286,6 +296,7 @@ internal class NativeBridge(
             "tap_drag" -> settings.setTapDrag(value as Boolean)
             "three_finger_middle_click" -> settings.setThreeFingerMiddleClick(value as Boolean)
             "pointer_speed" -> settings.setPointerSpeed((value as Number).toFloat())
+            "external_mouse_speed" -> settings.setExternalMouseSpeed((value as Number).toFloat())
             "pointer_send_mode" -> settings.setPointerSendMode((value as Number).toInt())
             "scroll_speed" -> settings.setScrollSpeed((value as Number).toFloat())
             "reverse_scroll" -> settings.setReverseScroll(value as Boolean)

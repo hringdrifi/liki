@@ -64,6 +64,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
     private var errorMessage: String?
     private var relayRequested = false
     private var relayRemaps: [Int: [Int]] = [:]
+    private var relayLayout = "none"
     private var relayLearning = false, studioConnected = false
     private var relayRemapEnabled = true
     private lazy var studio: StudioTransport = StudioTransport { [weak self] event in
@@ -79,7 +80,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
             guard let self else { return }
             self.emit(["relayInput": ["pressed": keys + (0..<8).filter { modifiers & (1 << $0) != 0 }.map { 0xe0 + $0 }, "consumer": 0]])
             if self.connected && !self.relayLearning {
-                let mapped = KeyboardRemapper.translate(modifiers: modifiers, keys: keys, rules: self.studioConnected || !self.relayRemapEnabled ? [:] : self.relayRemaps)
+                let mapped = KeyboardRemapper.translate(modifiers: modifiers, keys: keys, rules: self.studioConnected || !self.relayRemapEnabled ? [:] : self.relayRemaps, layout: self.relayLayout)
                 self.hid.sendKeyboard(modifiers: mapped.modifiers, codes: mapped.keys); self.hid.sendConsumer(usage: mapped.consumer)
             }
         }, changed: { [weak self] in
@@ -87,6 +88,10 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
             if self.relayRequested { self.studio.retry() }
         })
     private lazy var mouseRelay = MouseRelay(connected: { [weak self] in self?.connected == true },
+        speed: { [weak self] in
+            let value = (self?.settings["external_mouse_speed"] as? NSNumber)?.floatValue ?? 1
+            return value.isFinite ? min(3, max(0.5, value)) : 1
+        },
         send: { [weak self] buttons, x, y, wheel in
             guard let self, self.connected else { return }
             if self.buttons != buttons { self.flushMouse(); self.buttons = buttons; self.mouse(0, 0, 0) }
@@ -100,7 +105,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         "key_pitch_mm": 0.0, "auto_key_scale_px": 0.0, "tap_to_click": true, "hold_to_drag": true,
         "two_finger_scroll": true, "trackpad_pinch_zoom": true, "two_finger_right_click": true, "tap_drag": true,
         "three_finger_middle_click": true, "pointer_speed": 1.0, "pointer_send_mode": 2,
-        "scroll_speed": 1.0, "reverse_scroll": false
+        "external_mouse_speed": 1.0, "scroll_speed": 1.0, "reverse_scroll": false
     ]
     init(emit: @escaping ([String: Any?]) -> Void) {
         self.emit = emit
@@ -162,6 +167,7 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         switch method {
         case "initialize":
             relayRemaps = try KeyboardRemapper.parse(preferences["relay_remaps"] ?? "[]")
+            relayLayout = preferences["relay_layout"] ?? "none"
             applyWindowSettings()
             let scale = UIScreen.main.scale
             return ["preferences": preferences, "settings": settings, "status": status, "session": session,
@@ -193,11 +199,18 @@ private final class LikiBridge: NSObject, CBCentralManagerDelegate, UIDocumentPi
         case "relayRemaps":
             let json = args["value"] as? String ?? "[]", rules = try KeyboardRemapper.parse(json)
             relay.clear(); relayRemaps = rules; savePreferences(["relay_remaps": json])
+        case "relayLayout":
+            let value = args["value"] as? String ?? ""
+            guard ["none", "us-jis", "jis-us"].contains(value) else {
+                throw NSError(domain: "Liki", code: 21, userInfo: [NSLocalizedDescriptionKey: "配列変換の設定が不正です"])
+            }
+            relay.clear(); relayLayout = value; savePreferences(["relay_layout": value])
         case "studioWrite":
             guard let bytes = args["bytes"] as? [NSNumber], !bytes.isEmpty else {
                 throw NSError(domain: "Liki", code: 10, userInfo: [NSLocalizedDescriptionKey: "Studioの送信データを変換できません"])
             }
-            try studio.write(bytes.map { UInt8(clamping: $0.intValue) })
+            try studio.write(bytes.map { UInt8(clamping: $0.intValue) }, id: int("id"), label: args["label"] as? String ?? "")
+        case "studioComplete": try studio.complete(int("id"))
         case "asset": return try asset(args["name"] as? String ?? "")
         case "ready": prepare()
         case "discoverable": start()

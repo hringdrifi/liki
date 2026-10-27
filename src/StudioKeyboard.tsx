@@ -1,29 +1,41 @@
-import React, { useMemo, useReducer, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useReducer } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import type { GestureResponderEvent } from 'react-native';
 import Svg, { G, Rect, Text as SvgText } from 'react-native-svg';
 import { Geometry } from './model';
 import type { LikiModel } from './model';
 import { colors } from './Keyboard';
 import { studioKeyActive } from './zmk';
 import { KeyRain } from './KeyRain';
+import { StudioKeyboardGesture } from './studio-gesture';
+import type { Touch } from './gestures';
 
-export function StudioKeyboard({ model, selectedKey, onSelectKey, onSelectLayer }: {
-  model: LikiModel; selectedKey?: number; onSelectKey?(index: number): void; onSelectLayer?(): void;
+export function StudioKeyboard({ model, selectedKey, onSelectKey, onSelectLayer, showEffect = true }: {
+  model: LikiModel; selectedKey?: number; onSelectKey?(index: number): void; onSelectLayer?(): void; showEffect?: boolean;
 }) {
   const client = model.studio, layout = client.layout;
-  const [viewport, setViewport] = useState({ width: 0, height: 0 });
-  const geometry = useMemo(() => {
-    if (!layout) return undefined;
-    const g = new Geometry(layout.keys);
-    g.width = viewport.width; g.height = viewport.height;
-    g.base = Math.max(.01, Math.min((g.width - 12) / Math.max(1, g.right - g.left), (g.height - 12) / Math.max(1, g.bottom - g.top)));
-    return g;
-  }, [layout, viewport]);
+  const geometry = useMemo(() => layout ? new Geometry(layout.keys) : undefined, [layout]);
+  const gesture = useMemo(() => geometry ? new StudioKeyboardGesture(model, geometry) : undefined, [model, geometry]);
+  useLayoutEffect(() => gesture?.setSelector(onSelectKey), [gesture, onSelectKey]);
+  useEffect(() => () => gesture?.cancel(), [gesture]);
   const [, redraw] = useReducer(n => n + 1, 0);
+  useLayoutEffect(() => {
+    if (!gesture) return;
+    const reset = () => { gesture.reset(); redraw(); };
+    return model.registerStudioViewReset(reset);
+  }, [model, gesture]);
+  const touch = (kind: Touch['kind'], event: GestureResponderEvent) => {
+    if (!gesture) return;
+    const { changedTouches, touches } = event.nativeEvent;
+    if (kind === 'move' || kind === 'up') for (const point of touches) gesture.points.set(point.identifier, { x: point.locationX, y: point.locationY });
+    for (const point of changedTouches) gesture.touch({ kind, id: point.identifier, position: { x: point.locationX, y: point.locationY }, time: point.timestamp });
+    if (kind === 'cancel') gesture.cancel();
+    redraw();
+  };
   const layer = layout?.layers[client.layer];
   if (!layout) return <View style={{ flex: 1 }}>
-    {!!client.message && <Text style={{ color: colors.text, padding: 12 }}>{client.message}</Text>}
-    <KeyRain model={model} />
+    {model.isZmkKeyboard && !!client.message && <Text style={{ color: colors.text, padding: 12 }}>{client.message}</Text>}
+    {showEffect && <KeyRain key={model.relayEffect} model={model} />}
   </View>;
   return <View style={{ flex: 1, padding: 12, gap: 8 }}>
     {layout && geometry && layer && <>
@@ -33,14 +45,20 @@ export function StudioKeyboard({ model, selectedKey, onSelectKey, onSelectLayer 
           <Text style={{ color: colors.text }}>{layer.name}</Text>
         </Pressable>)}
       </ScrollView>
-      <View style={{ flex: 1, minHeight: 120 }} accessibilityLabel="ZMKキーボードのレイアウトと受信キーの表示"
-        onLayout={e => setViewport({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}>
-        <Svg width="100%" height="100%">
+      <View style={{ flex: 1, minHeight: 120, overflow: 'hidden' }} accessibilityLabel="ZMKキーボード。ドラッグで移動、ピンチで拡大縮小、編集時はタップでキーを選択"
+        onLayout={e => {
+          gesture?.setViewport(e.nativeEvent.layout.width, e.nativeEvent.layout.height);
+          redraw();
+        }}
+        onStartShouldSetResponder={() => true} onMoveShouldSetResponder={() => true} onResponderTerminationRequest={() => false}
+        onTouchStart={e => touch('down', e)} onTouchMove={e => touch('move', e)} onTouchEnd={e => touch('up', e)} onTouchCancel={e => touch('cancel', e)}
+        onResponderTerminate={() => gesture?.cancel()}>
+        <Svg width="100%" height="100%" pointerEvents="none">
           <G transform={`translate(${geometry.origin.x},${geometry.origin.y}) scale(${geometry.scale})`}>
             {layout.keys.map(key => {
               const binding = layer.keys[key.index], active = selectedKey === key.index || studioKeyActive(binding, model.relayPressed, model.relayConsumer);
               const lines = binding.label.split(' / '), size = Math.min(.22, (key.w - .12) / Math.max(2, ...lines.map(l => l.length * .6)));
-              return <G key={key.index} onPress={onSelectKey ? () => onSelectKey(key.index) : undefined} transform={`rotate(${key.rotation},${key.rx},${key.ry})`}>
+              return <G key={key.index} transform={`rotate(${key.rotation},${key.rx},${key.ry})`}>
                 <Rect x={key.x + .025} y={key.y + .025} width={key.w - .05} height={key.h - .05} rx={.08}
                   fill={active ? '#24736d' : colors.surface} stroke={active ? colors.accent : '#657789'} strokeWidth={.025} />
                 {lines.map((line, i) => <SvgText key={i} x={key.x + key.w / 2} y={key.y + key.h / 2 + size * (.3 + (i - (lines.length - 1) / 2) * 1.2)}

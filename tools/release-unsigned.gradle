@@ -1,0 +1,8 @@
+// The existing release certificate is applied by build-android-release.ps1.
+gradle.beforeProject { project ->
+    project.afterEvaluate {
+        if (project.path == ':app') {
+            project.android.buildTypes.getByName('release').signingConfig = null
+        }
+    }
+}

@@ -82,6 +82,9 @@ internal class AppSettings(context: Context) {
     fun pointerSpeed(): Float = preferences.getFloat("pointer_speed", 1f).coerceIn(0.5f, 3f)
     fun setPointerSpeed(speed: Float) = saveSpeed("pointer_speed", speed)
 
+    fun externalMouseSpeed(): Float = preferences.getFloat("external_mouse_speed", 1f).coerceIn(0.5f, 3f)
+    fun setExternalMouseSpeed(speed: Float) = saveSpeed("external_mouse_speed", speed)
+
     // 0 sends every movement immediately; 1 and 2 combine movement over 16/32 ms.
     fun pointerSendMode(): Int = preferences.getInt("pointer_send_mode", 2).coerceIn(0, 2)
     fun setPointerSendMode(mode: Int) {

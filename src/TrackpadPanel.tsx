@@ -22,7 +22,7 @@ export function TrackpadPanel({ model, active }: { model: LikiModel; active: boo
       position: { x: point.locationX, y: point.locationY }, time: point.timestamp });
   };
   return <View accessibilityLabel="トラックパッド" style={{ flex: 1, margin: 8, borderRadius: 12,
-    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.muted }}
+    backgroundColor: '#1f283480', borderWidth: 1, borderColor: colors.muted }}
     onStartShouldSetResponder={() => active} onMoveShouldSetResponder={() => active} onResponderTerminationRequest={() => false}
     onTouchStart={event => touch('down', event)} onTouchMove={event => touch('move', event)}
     onTouchEnd={event => touch('up', event)} onTouchCancel={() => gesture.cancel()} />;

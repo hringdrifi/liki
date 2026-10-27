@@ -8,7 +8,9 @@ import type { KeyShape, Data } from './src/model';
 import { Keyboard, colors } from './src/Keyboard';
 import { StudioKeyboard } from './src/StudioKeyboard';
 import { TrackpadPanel } from './src/TrackpadPanel';
+import { KeyRain } from './src/KeyRain';
 import { ExternalKeyEditor } from './src/ExternalKeyEditor';
+import { bindingCategories, bindingInCategory } from './src/key-categories';
 import { Settings, Button, Section, styles } from './src/Settings';
 import type { Choose, Prompt } from './src/Settings';
 
@@ -78,7 +80,7 @@ function Liki() {
     }
   };
   const editBinding = async (key: KeyShape) => {
-    const names = ['文字・数字', '記号', '基本キー', '修飾キー付き', 'メディアキー', 'ファンクションキー', '移動・編集', 'テンキー', '修飾キー単体', 'ショートカット', 'レイヤー', model.editLayer ? 'ベースを継承' : '自動割り当て'];
+    const names = [...bindingCategories, model.editLayer ? 'ベースを継承' : '自動割り当て'];
     const i = await choose(`レイヤー${model.editLayer}・「${key.labels.find(s => s) ?? ''}」の割り当て`, names);
     if (i === null) return;
     if (i === 11) {
@@ -88,23 +90,11 @@ function Liki() {
       return;
     }
     if (i === 3) { await modifierChoice(key); return; }
-    const options = model.options.filter(b => {
-      switch (i) {
-        case 0: return b.code >= 4 && b.code <= 39 && !b.modifier;
-        case 1: return b.code >= 45 && b.code <= 56;
-        case 2: return b.code >= 40 && b.code <= 44 || b.code === 57;
-        case 4: return b.consumer !== 0;
-        case 5: return b.code >= 58 && b.code <= 72;
-        case 6: return b.code >= 73 && b.code <= 82 || b.code === 101;
-        case 7: return b.code >= 83 && b.code <= 99;
-        case 8: return !b.code && b.modifier;
-        case 9: return b.code && b.modifier;
-        case 10: return b.action !== 'NONE';
-      }
-    });
+    const options = model.options.filter(b => bindingInCategory(b, i));
     const at = await choose(names[i], options.map(b => b.name)); if (at !== null) await model.assign(key, options[at].name);
   };
-  const controls = model.relayMode ? <StudioKeyboard model={model} /> : <View style={{ flex: 1 }}>
+  const sharedEffect = model.trackpadPanelEnabled && !model.editing && model.relayMode && !model.studio.layout;
+  const controls = model.relayMode ? <StudioKeyboard model={model} showEffect={!sharedEffect} /> : <View style={{ flex: 1 }}>
     <View style={{ flex: 1, padding: 8 }}>
       {model.editing && <><View style={{ flexDirection: 'row' }}>{[0, 1, 2, 3].map(i => <View style={{ flex: 1, opacity: i === model.editLayer ? 1 : .55 }} key={i}>
         <Button title={`レイヤー ${i}`} onPress={() => { model.editLayer = i; model.changed(); }} /></View>)}</View>
@@ -115,10 +105,15 @@ function Liki() {
     {!model.editing && <View pointerEvents="none" style={{ position: 'absolute', top: 12, left: 12, backgroundColor: colors.surface, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
       <Text accessibilityLabel={`現在のレイヤー ${model.layer}`} style={[styles.text, { fontSize: 12, fontWeight: 'bold' }]}>L{model.layer}{model.oneShotReturn !== undefined ? '・1回' : ''}</Text></View>}
   </View>;
-  const controlScreen = model.trackpadPanelEnabled && !model.editing ? <View style={{ flex: 1,
-    flexDirection: ({ bottom: 'column', top: 'column-reverse', left: 'row-reverse', right: 'row' } as const)[model.trackpadPanelPosition] }}>
-    <View style={{ flex: 100 - model.trackpadPanelSize }}>{controls}</View>
-    <View style={{ flex: model.trackpadPanelSize }}><TrackpadPanel model={model} active={!menu && !dialog} /></View>
+  const controlScreen = model.trackpadPanelEnabled && !model.editing ? <View style={{ flex: 1 }}>
+    {sharedEffect && <View pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
+      <KeyRain key={model.relayEffect} model={model} />
+    </View>}
+    <View style={{ flex: 1,
+      flexDirection: ({ bottom: 'column', top: 'column-reverse', left: 'row-reverse', right: 'row' } as const)[model.trackpadPanelPosition] }}>
+      <View style={{ flex: 100 - model.trackpadPanelSize, display: model.trackpadPanelSize === 100 ? 'none' : 'flex' }}>{controls}</View>
+      <View style={{ flex: model.trackpadPanelSize }}><TrackpadPanel model={model} active={!menu && !dialog} /></View>
+    </View>
   </View> : controls;
   const connection = <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 24 }}>
     <Text style={[styles.text, { fontSize: 36, fontWeight: 'bold' }]}>Liki</Text><Text style={[styles.buttonText, { fontWeight: 'bold' }]}>Pocket HID</Text>
@@ -180,16 +175,21 @@ function Liki() {
           {model.status.keyboards?.length ? model.status.keyboards.map((device: { id: string | number; name: string }) =>
             <Text style={[styles.text, { paddingHorizontal: 12, paddingBottom: 8 }]} key={device.id}>● {device.name}</Text>) :
             <Text style={[styles.muted, { paddingHorizontal: 12, paddingBottom: 8 }]}>接続された入力デバイスはありません</Text>}
-          {!!model.studio.message && <Text style={[styles.muted, { padding: 12 }]}>{model.studio.message}</Text>}
+          {model.isZmkKeyboard && !!model.studio.message && <Text style={[styles.muted, { padding: 12 }]}>{model.studio.message}</Text>}
           <Button align="left" title="キー割り当てを編集" onPress={() => { try { model.beginExternalEdit(); setMenu(false); } catch (reason) { error(reason); } }} />
-          <Button align="left" title="ZMKレイアウトを再取得" onPress={() => action(() => model.call('studioRetry'))} /></> : <>
+          <Button align="left" title={`配列変換: ${{ none: '変換なし', 'us-jis': 'US → JIS', 'jis-us': 'JIS → US' }[model.relayLayout]}`} onPress={() => action(async () => {
+            const index = await choose('配列変換（外部キーボード → 接続先の配列）', ['変換なし', 'US → JIS', 'JIS → US']);
+            if (index !== null) await model.setRelayLayout(['none', 'us-jis', 'jis-us'][index]);
+          })} />
+          {model.isZmkKeyboard && <Button align="left" title="ZMKレイアウトを再取得" onPress={() => action(() => model.call('studioRetry'))} />}</> : <>
           <Section title="レイアウト" />
           {model.selectedName && <Text style={styles.text}>保存: {model.selectedName}</Text>}
           <Button align="left" title="レイアウトを選択" onPress={() => action(chooseLayout)} />
           <Button align="left" title="キー割り当てを編集" onPress={() => { setMenu(false); model.beginEdit(); }} />
           <Button align="left" title="現在のレイアウトを保存" onPress={() => action(saveLayout)} />
           <Button align="left" title="保存したレイアウトを削除" disabled={!model.saved.length} onPress={() => action(deleteLayout)} />
-          <Button align="left" title="表示をリセット" onPress={() => action(() => model.resetView())} /></>}
+        </>}
+        <Button align="left" title="表示をリセット" onPress={() => action(() => model.resetView())} />
         <Section title="共通" />
         <Button align="left" title="設定" onPress={() => { setMenu(false); model.settingsVisible = true; model.syncPage(); model.changed(); }} />
         <Button align="left" title="PCとの接続を切断" onPress={() => action(() => model.call('disconnect'))} /></ScrollView></SafeAreaView></View>}

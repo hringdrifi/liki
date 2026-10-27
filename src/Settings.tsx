@@ -50,6 +50,11 @@ export function Settings({ model: m, onBack, onPrivacy, choose, prompt, run }: {
     <Section title="表示" />{choice('screen_orientation', '画面の向き', ['自動（端末の設定に従う）', '縦向き', '横向き', '横向き（反対向き）'])}
     {toggle('fullscreen_controls', '全画面表示', '接続後の操作画面でシステムバーを隠す。画面端からスワイプすると一時表示')}
     {toggle('keep_screen_on', '画面を常にON', 'Likiを開いている間は自動消灯しない')}
+    <Button title={`外付けキーボードのエフェクト: ${m.relayEffect === 'ripple' ? 'リップル' : 'マトリックス'}`} onPress={() => run(async () => {
+      const index = await choose('外付けキーボードのエフェクト', ['マトリックス', 'リップル']);
+      if (index !== null) await m.setRelayEffect(index === 1 ? 'ripple' : 'matrix');
+    })} />
+    <Text style={styles.muted}>キーボード配列を表示していない中継画面で、キー入力に反応する表示を選びます。</Text>
     <Section title="操作感" />{toggle('touch_vibration', 'タッチ時に振動', 'キーのタップとトラックパッドのクリック時に振動')}
     <Section title="キーボード" /><Text style={styles.text}>レイヤーごとのボタン枠の色</Text>
     {[0, 1, 2, 3].map(layer => <View key={layer} style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -61,6 +66,8 @@ export function Settings({ model: m, onBack, onPrivacy, choose, prompt, run }: {
     {toggle('sticky_modifiers', '修飾キーを保持', 'Ctrl・Shiftなどを次のキー入力まで保持')}
     {toggle('pinch_zoom', 'ピンチで拡大縮小', '2本指でキーボードの表示倍率を変更')}
     {toggle('drag_move_keyboard', 'ドラッグでキーボードを移動', '通常キーの上を1本指で動かして表示位置を変更')}
+    <Section title="外部マウス" />
+    {slider('external_mouse_speed', '外部マウスの速度', .5, 3, '倍')}
     <Section title="トラックパッド" />
     <View style={{ paddingVertical: 8, flexDirection: 'row', alignItems: 'center' }}><Text style={[styles.text, { flex: 1, fontSize: 16 }]}>独立したトラックパッド領域</Text>
       <Switch accessibilityLabel="独立したトラックパッド領域" value={m.trackpadPanelEnabled}

@@ -7,6 +7,7 @@ import { StudioKeyboard } from './StudioKeyboard';
 import { studioParameters, usageLabel } from './zmk';
 import type { StudioBinding, StudioParameter } from './zmk';
 import { bindingUsage, expandUsage, remapLabel, validUsage } from './remap';
+import { bindingCategories, bindingInCategory } from './key-categories';
 
 type Choice = { label: string; value: number };
 type Picker = { title: string; options: Choice[]; select(value: number): void };
@@ -48,6 +49,33 @@ export function ExternalKeyEditor({ model: m }: { model: LikiModel }) {
   const openPicker = (title: string, options: Choice[], select: (value: number) => void) => {
     if (m.relayLearning) m.learnRelayKey(false);
     setSearch(''); setPicker({ title, options, select });
+  };
+  const openKeyPicker = (choices: Choice[], select: (value: number) => void) => {
+    const allowed = new Set(choices.map(choice => choice.value));
+    const categoryChoices = (category: number) => {
+      const values = new Set(m.options.filter(binding => bindingInCategory(binding, category)).map(bindingUsage));
+      return choices.filter(choice => values.has(choice.value));
+    };
+    const bases = m.options.filter(binding => binding.code && !binding.modifier && !binding.consumer && binding.action === 'NONE')
+      .map(binding => ({ label: binding.name, value: bindingUsage(binding) })).filter(choice => allowed.has(choice.value));
+    const modified = (selected: number[] = []) => {
+      const names = ['LCTL', 'LSFT', 'LALT', 'LGUI', 'RCTL', 'RSFT', 'RALT', 'RGUI'];
+      openPicker(`修飾キー付き → ${selected.map(index => names[index]).join('+')}`, names.map((label, value) => ({ label, value }))
+        .filter(choice => !selected.includes(choice.value)), value => {
+        const next = [...selected, value], mask = next.reduce((result, index) => result | (1 << index), 0);
+        openPicker(`修飾キー付き → ${next.map(index => names[index]).join('+')} → キー`,
+          [...(next.length < 8 ? [{ label: '修飾キーを追加…', value: -1 }] : []), ...bases], key => {
+            if (key === -1) modified(next);
+            else select(((key & 0xffffff) | (mask << 24)) >>> 0);
+          });
+      });
+    };
+    openPicker('割り当てを選択', [...bindingCategories.flatMap((label, value) =>
+      (value === 3 ? bases.length : categoryChoices(value).length) ? [{ label, value }] : []),
+    { label: 'すべてのキー', value: -1 }], category => {
+      if (category === 3) modified();
+      else openPicker(category === -1 ? 'すべてのキー' : bindingCategories[category], category === -1 ? choices : categoryChoices(category), select);
+    });
   };
   const clearRemap = () => { if (m.relayLearning) m.learnRelayKey(false); setSource(undefined); setTarget(undefined); setOriginal(undefined); };
   const saveRemap = () => perform(async () => {
@@ -112,7 +140,11 @@ export function ExternalKeyEditor({ model: m }: { model: LikiModel }) {
                   onChangeText={value => setParameters(current => current.map((old, at) => at === index ? value : old))}
                   style={[styles.text, { borderWidth: 1, borderColor: colors.muted, borderRadius: 6, padding: 10 }]} />}
                 {!!choices.length && <Button align="left" title={label || '選択'} disabled={busy}
-                  onPress={() => openPicker('値を選択', choices, value => setParameters(current => current.map((old, at) => at === index ? String(value) : old)))} />}
+                  onPress={() => {
+                    const select = (value: number) => setParameters(current => current.map((old, at) => at === index ? String(value) : old));
+                    if (options.some(option => option.kind === 'hid')) openKeyPicker(choices, select);
+                    else openPicker('値を選択', choices, select);
+                  }} />}
                 {options.some(option => option.kind === 'hid') && ((current >>> 16) & 255) === 7 && <Modifiers value={current >>> 24} disabled={busy}
                   onChange={mask => setParameters(values => values.map((old, at) => at === index ? String(((current & 0xffffff) | (mask << 24)) >>> 0) : old))} />}
               </View>;
@@ -147,7 +179,7 @@ export function ExternalKeyEditor({ model: m }: { model: LikiModel }) {
         <Text style={[styles.text, { fontSize: 20, fontWeight: 'bold' }]}>{picker?.title}</Text>
         <TextInput value={search} onChangeText={setSearch} placeholder="検索" placeholderTextColor={colors.muted} style={[styles.text, { padding: 12 }]} />
         <ScrollView>{picker?.options.filter(choice => choice.label.toLowerCase().includes(search.toLowerCase())).map((choice, index) =>
-          <Button align="left" key={`${choice.value}-${index}`} title={choice.label} onPress={() => { picker.select(choice.value); setPicker(undefined); }} />)}</ScrollView>
+          <Button align="left" key={`${choice.value}-${index}`} title={choice.label} onPress={() => { setPicker(undefined); picker.select(choice.value); }} />)}</ScrollView>
         <Button title="閉じる" onPress={() => setPicker(undefined)} />
       </View></View>
     </Modal>

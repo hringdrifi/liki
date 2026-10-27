@@ -25,13 +25,14 @@ internal class ExternalKeyboardRelay(
     private val keyboard: (ByteArray) -> Unit,
     private val consumer: (Int) -> Unit,
     private val mouse: (Int, Int, Int, Int) -> Unit,
+    private val mouseSpeed: () -> Float,
     private val windowView: () -> View?,
     private val changed: () -> Unit,
     private val inputChanged: (List<Int>, Int) -> Unit
 ) : InputManager.InputDeviceListener {
     private val input = context.getSystemService(InputManager::class.java)
     private val state = RelayKeyState()
-    private val mouseState = RelayMouseState()
+    private val mouseState = RelayMouseState(mouseSpeed)
     private var pointerView: View? = null
     private var started = false
     private var enabled = false
@@ -40,6 +41,11 @@ internal class ExternalKeyboardRelay(
     private var remaps: Map<Int, List<Int>> = emptyMap()
     private var learning = false
     private var useRemaps = true
+    private var layout = "none"
+    fun configureLayout(value: String) {
+        require(value in listOf("none", "us-jis", "jis-us"))
+        if (layout != value) { release(); layout = value }
+    }
     fun configureRemaps(rules: Map<Int, List<Int>> = remaps, learn: Boolean = learning, apply: Boolean = useRemaps) {
         if (rules != remaps || learn != learning || apply != useRemaps) {
             release(); remaps = rules; learning = learn; useRemaps = apply
@@ -68,7 +74,7 @@ internal class ExternalKeyboardRelay(
     private fun send() {
         val pressed = state.pressedUsages(); val media = state.consumerUsage()
         if (!learning) {
-            val report = KeyboardRemapper.translate(pressed, media, if (useRemaps) remaps else emptyMap())
+            val report = KeyboardRemapper.translate(pressed, media, if (useRemaps) remaps else emptyMap(), layout)
             keyboard(report.keyboard); consumer(report.consumer)
         }
         inputChanged(pressed, media)

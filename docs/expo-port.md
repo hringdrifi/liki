@@ -74,7 +74,7 @@ Androidの実際のPCへの転送結果とiOSのHID送信結果は別途確認�
 
 このAPKはexpo-dev-clientの開発用で、画面の実行にはMetroを起動する。Android端末（2407FPN8ER）へのインストール、Metroからの画面読み込み、接続画面の「準備完了」表示を確認した。PCへのHID送信は未確認。
 
-初回のFlutter版からの入れ替えは、デバッグ署名が異なり `INSTALL_FAILED_UPDATE_INCOMPATIBLE` になるため、許可済みの旧設定削除を伴ってFlutter版をアンインストールし、`adb install --no-streaming` でExpo版をインストールした。端末側の確認でもインストール許可が必要だった。Flutter APKはローカルの `build/Liki-flutter-debug.apk` に保存している。
+初回のFlutter版からの入れ替えは、デバッグ署名が異なり `INSTALL_FAILED_UPDATE_INCOMPATIBLE` になるため、許可済みの旧設定削除を伴ってFlutter版をアンインストールし、`adb install --no-streaming` でExpo版をインストールした。端末側の確認でもインストール許可が必要だった。
 
 このWindows環境では `--localhost` のMetroがIPv6の `::1` だけで待ち受けたため、起動するプロセスで `$env:NODE_OPTIONS = '--dns-result-order=ipv4first'` を設定してから `npm start -- --localhost` を実行し、`127.0.0.1:8081` の応答を確認した。`adb reverse tcp:8081 tcp:8081` を設定し、開発クライアントを `exp+liki://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081` で開いた。
 

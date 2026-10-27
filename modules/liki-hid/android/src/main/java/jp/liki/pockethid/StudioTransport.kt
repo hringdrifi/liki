@@ -23,6 +23,9 @@ internal class StudioTransport(private val context: Context, private val emit: (
     private var writing = false
     private var resettingIndications = false
     private var awaitingMtu = false
+    private var requestId: Int? = null
+    private var requestTimeout: Runnable? = null
+    private var requestReceivedBytes = 0
     private val timeout = Runnable { fail("Studioへの接続がタイムアウトしました") }
     private fun trace(message: String) {
         if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) Log.d("LikiStudio", message)
@@ -34,13 +37,15 @@ internal class StudioTransport(private val context: Context, private val emit: (
         if (value) find() else { disconnect(); state("") }
     }
     fun retry() { disconnect(); if (enabled) find() }
+    fun inputDevicesChanged() { if (enabled) find(onlyIfChanged = true) }
     private fun disconnect() {
         main.removeCallbacks(timeout)
+        requestTimeout?.let(main::removeCallbacks); requestTimeout = null; requestId = null
         val old = gatt; gatt = null; rpc = null; queue.clear(); writing = false; resettingIndications = false; awaitingMtu = false
         old?.disconnect(); old?.close()
     }
     private fun fail(message: String) { disconnect(); state(message) }
-    private fun find() {
+    private fun find(onlyIfChanged: Boolean = false) {
         try {
             val input = context.getSystemService(InputManager::class.java)
             val names = input.inputDeviceIds.map(input::getInputDevice).filterNotNull()
@@ -49,6 +54,10 @@ internal class StudioTransport(private val context: Context, private val emit: (
             val adapter = context.getSystemService(BluetoothManager::class.java).adapter
             val devices = adapter?.bondedDevices.orEmpty().filter { device ->
                 device.type != BluetoothDevice.DEVICE_TYPE_CLASSIC && names.any { matchesStudioKeyboardName(it, device.name) }
+            }
+            if (onlyIfChanged) {
+                if (gatt != null && gatt?.device?.address == devices.singleOrNull()?.address) return
+                disconnect()
             }
             if (devices.size != 1) {
                 state(if (devices.isEmpty()) "接続済みのBLEキーボードが見つかりません。接続後に再取得してください" else "BLEキーボードを1台だけ接続して再取得してください")
@@ -110,18 +119,31 @@ internal class StudioTransport(private val context: Context, private val emit: (
         @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(source: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             val bytes = characteristic.value?.clone() ?: return
-            current(source) { trace("received bytes=${bytes.size}"); emit(mapOf("studioBytes" to bytes.map { it.toInt() and 255 })) }
+            current(source) {
+                requestReceivedBytes += bytes.size
+                trace("received bytes=${bytes.size}"); emit(mapOf("studioBytes" to bytes.map { it.toInt() and 255 }))
+            }
         }
         override fun onCharacteristicWrite(source: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) = current(source) {
             trace("write completed status=$status")
             if (status != BluetoothGatt.GATT_SUCCESS) fail("Studioへの送信に失敗しました") else { writing = false; next() }
         }
     }
-    fun write(bytes: List<Int>) {
+    fun write(bytes: List<Int>, id: Int, label: String) {
         check(gatt != null && rpc != null) { "Studioが接続されていません" }
+        check(requestId == null) { "Studioの通信が処理中です" }
         require(bytes.size <= 4096 && queue.size < 256)
+        requestId = id; requestReceivedBytes = 0
+        val deadline = Runnable {
+            if (requestId == id) fail("Studioの応答がありません（$label、受信${requestReceivedBytes}バイト）。再取得してください")
+        }
+        requestTimeout = deadline; main.postDelayed(deadline, 8000)
         bytes.chunked(20).forEach { queue.addLast(it.map(Int::toByte).toByteArray()) }
         next()
+    }
+    fun complete(id: Int) {
+        check(requestId == id) { "Studio接続が変更されました" }
+        requestTimeout?.let(main::removeCallbacks); requestTimeout = null; requestId = null
     }
     @Suppress("DEPRECATION")
     private fun next() {

@@ -12,6 +12,7 @@ final class MouseRelay {
         init(_ mouse: GCMouse, _ profile: GCMouseInput) { self.mouse = mouse; self.profile = profile }
     }
     private let connected: () -> Bool
+    private let speed: () -> Float
     private let send: (Int, Int, Int, Int) -> Void
     private let changed: () -> Void
     private var observers: [NSObjectProtocol] = []
@@ -29,8 +30,8 @@ final class MouseRelay {
          "currentProfiles": inputs.values.filter { $0.profile === $0.mouse.mouseInput }.count]
     }
 
-    init(connected: @escaping () -> Bool, send: @escaping (Int, Int, Int, Int) -> Void, changed: @escaping () -> Void) {
-        self.connected = connected; self.send = send; self.changed = changed
+    init(connected: @escaping () -> Bool, speed: @escaping () -> Float, send: @escaping (Int, Int, Int, Int) -> Void, changed: @escaping () -> Void) {
+        self.connected = connected; self.speed = speed; self.send = send; self.changed = changed
         for name in [Notification.Name.GCMouseDidConnect, .GCMouseDidDisconnect, UIApplication.didBecomeActiveNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.attach(); self?.changed() }
@@ -72,7 +73,8 @@ final class MouseRelay {
                     self.movementEvents += 1
                     guard let input, self.active(token), dx.isFinite, dy.isFinite else { return }
                     // GameController uses positive Y upwards; HID uses positive Y downwards.
-                    input.x += dx; input.y -= dy
+                    let scale = self.speed()
+                    input.x += dx * scale; input.y -= dy * scale
                     let x = Int(input.x), y = Int(input.y)
                     input.x -= Float(x); input.y -= Float(y)
                     if x != 0 || y != 0 { self.forwardedMovements += 1; self.send(self.buttons, x, y, 0) }

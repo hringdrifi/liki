@@ -30,6 +30,26 @@ function FallingKey({ drop, height, columns, done }: { drop: Drop; height: numbe
   </Animated.View>;
 }
 
+function RipplingKey({ drop, width, height, columns, done }: {
+  drop: Drop; width: number; height: number; columns: number; done(id: number): void;
+}) {
+  const [progress] = useState(() => new Animated.Value(0));
+  useEffect(() => {
+    const animation = Animated.timing(progress, { toValue: 1, duration: 1200, easing: Easing.out(Easing.quad), useNativeDriver: true });
+    animation.start(({ finished }) => { if (finished) done(drop.id); });
+    return () => animation.stop();
+  }, [done, drop.id, progress]);
+  const diameter = Math.max(width, height) * 1.4;
+  return <View style={{ position: 'absolute', left: (drop.column + .5) / columns * width,
+    top: (.2 + (drop.id * .41421356237 % 1) * .6) * height, width: 0, height: 0 }}>
+    {[0, 1].map(index => <Animated.View key={index} style={{ position: 'absolute',
+      width: diameter, height: diameter, left: -diameter / 2, top: -diameter / 2, borderRadius: diameter / 2,
+      borderWidth: 2, borderColor: '#9ce8df',
+      opacity: progress.interpolate({ inputRange: [0, .15, .4, 1], outputRange: [0, .9, .75, 0] }),
+      transform: [{ scale: progress.interpolate({ inputRange: [0, 1], outputRange: [.01, index === 0 ? 1 : .72] }) }] }} />)}
+  </View>;
+}
+
 export function KeyRain({ model }: { model: LikiModel }) {
   const [drops, setDrops] = useState<Drop[]>([]), [viewport, setViewport] = useState({ width: 0, height: 0 });
   const serial = useRef(0), columns = Math.max(4, Math.floor(viewport.width / 56));
@@ -51,10 +71,13 @@ export function KeyRain({ model }: { model: LikiModel }) {
     });
     return () => listener.remove();
   }, [model, columns]);
-  return <View pointerEvents="none" accessibilityLabel="受信したキーの表示" style={{ flex: 1, overflow: 'hidden', backgroundColor: '#060d09' }}
+  const ripple = model.relayEffect === 'ripple';
+  return <View pointerEvents="none" accessibilityLabel="受信したキーの表示" style={{ flex: 1, overflow: 'hidden', backgroundColor: ripple ? '#071012' : '#060d09' }}
     onLayout={event => setViewport({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height })}>
-    {Array.from({ length: columns }, (_, column) => <View key={column} style={{ position: 'absolute', top: 0, bottom: 0,
+    {!ripple && Array.from({ length: columns }, (_, column) => <View key={column} style={{ position: 'absolute', top: 0, bottom: 0,
       left: `${(column + .5) / columns * 100}%`, width: 1, backgroundColor: green, opacity: .025 }} />)}
-    {drops.map(drop => <FallingKey key={drop.id} drop={drop} height={viewport.height} columns={columns} done={done} />)}
+    {drops.map(drop => ripple
+      ? <RipplingKey key={drop.id} drop={drop} width={viewport.width} height={viewport.height} columns={columns} done={done} />
+      : <FallingKey key={drop.id} drop={drop} height={viewport.height} columns={columns} done={done} />)}
   </View>;
 }

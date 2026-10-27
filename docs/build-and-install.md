@@ -86,6 +86,16 @@ try {
 
 成功時のAPKは`android/app/build/outputs/apk/debug/app-debug.apk`です。現在はExpoから`android/`を生成するため、旧Android版のリポジトリ直下にあるGradle Wrapperを前提にしないでください。必要なネイティブ変更はローカルモジュールやconfig pluginへ反映します。
 
+### 既存の配布用署名鍵でローカルAPKを作る
+
+配布用の鍵とDPAPIで保管したパスワードを持つWindows環境では、リポジトリ直下から次を実行します。
+
+```powershell
+.\tools\build-android-release.ps1 -JavaHome '<JDK 21のインストール先>'
+```
+
+このスクリプトは現在の作業フォルダーをビルド元として、型チェック、JavaScriptのテスト、Androidプロジェクトの生成、ネイティブのテスト、リリースビルド、既存鍵での署名と検証を順に行います。出力先は`build/current-android/<実行日時>/`で、APK、ビルド元ファイルのSHA-256、未コミット差分、APKと署名証明書のSHA-256を記録します。検査が失敗した場合やビルド中にソースが変わった場合は停止します。
+
 ### USBで導入する
 
 Android端末で開発者向けオプションとUSBデバッグを有効にし、PCへ接続して端末側の接続許可を承認します。

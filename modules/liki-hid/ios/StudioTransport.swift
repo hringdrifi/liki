@@ -16,6 +16,9 @@ final class StudioTransport: NSObject, CBCentralManagerDelegate, CBPeripheralDel
     private var resettingNotifications = false
     private var receivedBytes = 0, completedWrites = 0
     private var timeout: DispatchWorkItem?
+    private var requestId: Int?
+    private var requestTimeout: DispatchWorkItem?
+    private var requestReceivedBytes = 0
     init(emit: @escaping ([String: Any]) -> Void) { self.emit = emit; super.init() }
     private func state(_ message: String, ready: Bool = false) { emit(["studioState": ["message": message, "ready": ready]]) }
     func enable(_ value: Bool) {
@@ -35,6 +38,7 @@ final class StudioTransport: NSObject, CBCentralManagerDelegate, CBPeripheralDel
     }
     private func disconnect() {
         timeout?.cancel(); timeout = nil
+        requestTimeout?.cancel(); requestTimeout = nil; requestId = nil
         peripheral?.delegate = nil
         if let peripheral { central?.cancelPeripheralConnection(peripheral) }
         peripheral = nil; characteristic = nil; queue.removeAll(); writing = false
@@ -97,14 +101,26 @@ final class StudioTransport: NSObject, CBCentralManagerDelegate, CBPeripheralDel
         guard peripheral === self.peripheral, characteristic === self.characteristic else { return }
         guard error == nil, let value = characteristic.value else { fail("Studioの受信に失敗しました"); return }
         receivedBytes += value.count
+        requestReceivedBytes += value.count
         emit(["studioBytes": value.map(Int.init)])
     }
-    func write(_ bytes: [UInt8]) throws {
+    func write(_ bytes: [UInt8], id: Int, label: String) throws {
         guard let peripheral, characteristic != nil else { throw NSError(domain: "Liki", code: 10, userInfo: [NSLocalizedDescriptionKey: "Studioが接続されていません"]) }
+        guard requestId == nil else { throw NSError(domain: "Liki", code: 11, userInfo: [NSLocalizedDescriptionKey: "Studioの通信が処理中です"]) }
         let size = peripheral.maximumWriteValueLength(for: .withResponse)
         guard bytes.count <= 4096, queue.count < 256 else { throw NSError(domain: "Liki", code: 11) }
+        requestId = id; requestReceivedBytes = 0
+        let deadline = DispatchWorkItem { [weak self] in
+            guard let self, self.requestId == id else { return }
+            self.fail("Studioの応答がありません（\(label)、受信\(self.requestReceivedBytes)バイト）。再取得してください")
+        }
+        requestTimeout = deadline; DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: deadline)
         for start in stride(from: 0, to: bytes.count, by: size) { queue.append(Data(bytes[start..<min(start + size, bytes.count)])) }
         next()
+    }
+    func complete(_ id: Int) throws {
+        guard requestId == id else { throw NSError(domain: "Liki", code: 10, userInfo: [NSLocalizedDescriptionKey: "Studio接続が変更されました"]) }
+        requestTimeout?.cancel(); requestTimeout = nil; requestId = nil
     }
     private func next() {
         guard !writing, !queue.isEmpty, let peripheral, let characteristic else { return }

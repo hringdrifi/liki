@@ -112,6 +112,7 @@ export function studioBinding(binding: Message, details?: Message, layoutName?: 
   // Bifrost's JIS-host mod-morph definitions have no HID parameters in Studio metadata.
   if (!usages.length && layoutName === 'Bifrost' && params.every(p => p === 0)) {
     if (name === 'us_minus') return { label: '-', usages: [0x7002d, 0x02070087] };
+    if (name === 'us_backslash') return { label: '\\', usages: [0x70087, 0x02070089] };
     if (name === 'us_semicolon') return { label: ';', usages: [0x70033, 0x70034] };
   }
   return { label: usages.length ? usages.map(usageLabel).join(' / ') : `${name}${params.some(Boolean) ? ` ${params.join(', ')}` : ''}`, usages };
@@ -130,40 +131,78 @@ export class StudioClient {
   behaviors: StudioBehavior[] = [];
   private details = new Map<number, Message>();
   private frames = new StudioFrames(); private serial = 0; private generation = 0;
-  private receivedBytes = 0;
-  private pending?: { id: number; resolve(m: Message): void; reject(e: Error): void; timer: ReturnType<typeof setTimeout> };
-  private write: (bytes: number[]) => Promise<any>; private changed: () => void;
-  constructor(write: (bytes: number[]) => Promise<any>, changed: () => void) { this.write = write; this.changed = changed; }
+  private locked = false;
+  private pending?: { id: number; resolve(m: Message): void; reject(e: Error): void; completing?: boolean };
+  private write: (bytes: number[], id: number, label: string) => Promise<any>;
+  private changed: () => void; private complete: (id: number) => Promise<any>;
+  constructor(write: (bytes: number[], id: number, label: string) => Promise<any>, changed: () => void, complete: (id: number) => Promise<any>) {
+    this.write = write; this.changed = changed; this.complete = complete;
+  }
   reset(message = '') {
+    this.locked = false;
     this.behaviors = []; this.details.clear(); this.dirty = false;
-    this.generation++; this.ready = false; this.layout = undefined; this.layer = 0; this.message = message; this.frames = new StudioFrames(); this.receivedBytes = 0;
-    if (this.pending) { clearTimeout(this.pending.timer); this.pending.reject(Error('Studio接続を終了しました')); this.pending = undefined; }
+    this.generation++; this.ready = false; this.layout = undefined; this.layer = 0; this.message = message; this.frames = new StudioFrames();
+    if (this.pending) { this.pending.reject(Error(message || 'Studio接続を終了しました')); this.pending = undefined; }
+    this.changed();
+  }
+  private setLockState(state: number) {
+    this.locked = state !== 1;
+    if (this.locked) {
+      this.generation++; this.ready = false;
+      this.message = 'キーボードのStudioロックを解除し、再取得してください';
+      const pending = this.pending; this.pending = undefined;
+      if (pending) {
+        const error = Error(this.message);
+        if (pending.completing) pending.reject(error);
+        else void this.complete(pending.id).then(() => pending.reject(error), e => pending.reject(e));
+      }
+    }
     this.changed();
   }
   receive(chunk: number[]) {
-    this.receivedBytes += chunk.length;
     try {
       for (const data of this.frames.push(chunk)) {
         const response = protobuf(data);
+        if (response.has(2)) {
+          const core = child(child(response, 2), 2);
+          if (core.has(1)) this.setLockState(number(core, 1));
+        }
         if (!response.has(1)) continue;
         const reply = child(response, 1), pending = this.pending;
-        if (!pending || number(reply, 1) !== pending.id) continue;
-        clearTimeout(pending.timer); this.pending = undefined;
-        if (reply.has(2)) pending.reject(Error(number(child(reply, 2), 2) === 1 ? 'キーボードのStudioロックを解除し、再取得してください' : 'Studioが要求を拒否しました'));
-        else pending.resolve(reply);
+        if (!pending || pending.completing || number(reply, 1) !== pending.id) continue;
+        pending.completing = true;
+        // Finish the native deadline before allowing the next RPC request.
+        void this.complete(pending.id).then(() => {
+          if (this.pending !== pending) return;
+          this.pending = undefined;
+          if (reply.has(2)) {
+            if (number(child(reply, 2), 2) === 1) { this.setLockState(0); pending.reject(Error(this.message)); }
+            else pending.reject(Error('Studioが要求を拒否しました'));
+          } else pending.resolve(reply);
+        }).catch(e => {
+          if (this.pending === pending) { this.pending = undefined; pending.reject(e); }
+        });
       }
     } catch (e) { this.reset(String(e)); }
   }
   private request(subsystem: number, payload: number[], label: string): Promise<Message> {
+    if (this.locked && subsystem !== 3) return Promise.reject(Error(this.message));
     if (this.pending) return Promise.reject(Error('Studioの通信が処理中です'));
-    const id = ++this.serial, before = this.receivedBytes;
+    const id = ++this.serial;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { if (this.pending?.id === id) { this.pending = undefined; reject(Error(`Studioの応答がありません（${label}、受信${this.receivedBytes - before}バイト）`)); } }, 8000);
-      this.pending = { id, resolve, reject, timer };
-      void this.write(frame([...field(1, id), ...field(subsystem, payload)])).catch(e => {
-        if (this.pending?.id === id) { clearTimeout(timer); this.pending = undefined; reject(e); }
+      this.pending = { id, resolve, reject };
+      void this.write(frame([...field(1, id), ...field(subsystem, payload)]), id, label).catch(e => {
+        if (this.pending?.id === id) { this.pending = undefined; reject(e); }
       });
     });
+  }
+  private async checkUnlocked() {
+    const generation = this.generation;
+    const lock = child(await this.request(3, field(2, 1), 'ロック状態確認'), 3);
+    if (generation !== this.generation) throw Error('Studio接続が変更されました');
+    if (!lock.has(2) || ![0, 1].includes(number(lock, 2))) throw Error('Studioのロック状態を確認できません。再取得してください');
+    if (number(lock, 2) === 0) { this.setLockState(0); throw Error(this.message); }
+    this.locked = false;
   }
   async load() {
     if (this.pending) return;
@@ -174,11 +213,9 @@ export class StudioClient {
       if (generation !== this.generation) throw Error('Studio接続が変更されました');
       return response;
     };
-    this.message = 'ZMKレイアウトを取得中…'; this.changed();
+    this.ready = false; this.message = 'ZMKレイアウトを取得中…'; this.changed();
     try {
-      const lock = child(await request(3, field(2, 1), 'ロック状態確認'), 3);
-      if (!lock.has(2) || ![0, 1].includes(number(lock, 2))) throw Error('Studioのロック状態を確認できません。再取得してください');
-      if (number(lock, 2) === 0) throw Error('キーボードのStudioロックを解除し、再取得してください');
+      await this.checkUnlocked();
       const physical = physicalLayout(child(child(await request(5, field(6, 1), '物理レイアウト'), 5), 6));
       const keymap = child(child(await request(5, field(1, 1), 'キー割り当て'), 5), 1);
       const layers = children(keymap, 1), details = new Map<number, Message>();
@@ -235,6 +272,7 @@ export class StudioClient {
     const generation = this.generation;
     this.busy = true; this.changed();
     try {
+      await this.checkUnlocked();
       const unsaved = child(await this.request(5, field(3, 1), '未保存の変更確認'), 5);
       if (generation !== this.generation) throw Error('Studio接続が変更されました');
       if (!unsaved.has(3) || number(unsaved, 3)) throw Error('キーボードに未保存の変更があります。Studioで保存または破棄してから編集してください');
@@ -250,13 +288,14 @@ export class StudioClient {
   async savePending() {
     if (!this.dirty || this.busy || this.pending) throw Error('保存対象がありません');
     this.busy = true; this.changed();
-    try { await this.persistChanges(); await this.load(); if (this.message) throw Error(this.message); } finally { this.busy = false; this.changed(); }
+    try { await this.checkUnlocked(); await this.persistChanges(); await this.load(); if (this.message) throw Error(this.message); } finally { this.busy = false; this.changed(); }
   }
   async discardPending() {
     if (!this.dirty || this.busy || this.pending) throw Error('破棄する変更がありません');
     const generation = this.generation;
     this.busy = true; this.changed();
     try {
+      await this.checkUnlocked();
       const result = child(await this.request(5, field(5, 1), '変更を破棄'), 5);
       if (generation !== this.generation) throw Error('Studio接続が変更されました');
       if (!result.has(5) || number(result, 5) !== 1) throw Error('変更を破棄できませんでした');

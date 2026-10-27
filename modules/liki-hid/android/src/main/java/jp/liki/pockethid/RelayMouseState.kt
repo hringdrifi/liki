@@ -1,7 +1,7 @@
 package jp.liki.pockethid
 
 /** Relative mouse state per physical device. Fractional motion is retained between events. */
-internal class RelayMouseState {
+internal class RelayMouseState(private val speed: () -> Float = { 1f }) {
     data class Report(val buttons: Int, val x: Int = 0, val y: Int = 0, val wheel: Int = 0)
     private data class Device(var buttons: Int = 0, var x: Float = 0f, var y: Float = 0f, var wheel: Float = 0f)
     private val devices = mutableMapOf<Int, Device>()
@@ -11,8 +11,9 @@ internal class RelayMouseState {
         val previous = buttons()
         val device = devices.getOrPut(id) { Device() }
         device.buttons = buttons and 7
-        if (x.isFinite()) device.x += x
-        if (y.isFinite()) device.y += y
+        val scale = speed()
+        if (x.isFinite()) device.x += x * scale
+        if (y.isFinite()) device.y += y * scale
         if (wheel.isFinite()) device.wheel += wheel
         var dx = device.x.toInt(); var dy = device.y.toInt(); var dw = device.wheel.toInt()
         device.x -= dx; device.y -= dy; device.wheel -= dw

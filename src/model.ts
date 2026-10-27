@@ -17,7 +17,7 @@ export const distance = (a: Point, b: Point): number => Math.hypot(a.x - b.x, a.
 export const zero = (): Point => ({ x: 0, y: 0 });
 export const clamp = (v: number, low: number, high: number) => Math.max(low, Math.min(high, v));
 export const KEY_PITCH_MIN_MM = 3, KEY_PITCH_MAX_MM = 24;
-export const TRACKPAD_PANEL_MIN_PERCENT = 10, TRACKPAD_PANEL_MAX_PERCENT = 70;
+export const TRACKPAD_PANEL_MIN_PERCENT = 10, TRACKPAD_PANEL_MAX_PERCENT = 100;
 export function rotate(k: KeyShape, p: Point, inverse = false): Point {
   const a = k.rotation * Math.PI / 180 * (inverse ? -1 : 1), dx = p.x - k.rx, dy = p.y - k.ry;
   return { x: k.rx + dx * Math.cos(a) - dy * Math.sin(a), y: k.ry + dx * Math.sin(a) + dy * Math.cos(a) };
@@ -66,14 +66,15 @@ export class LikiModel {
   selectedName?: string; selectedAddress?: string; overrides: Data = {}; layers: Data = {}; inferred: Data = {};
   density = 1; xdpi = 160; initialized = false; editing = false; settingsVisible = false; showingControls = false;
   relayMode = false; relayPaused = false;
+  private resetStudioView?: () => void;
   isZmkKeyboard = false; externalEditing = false; externalEditZmk = false; relayLearning = false;
-  readonly studio = new StudioClient(bytes => this.call('studioWrite', { bytes }), () => {
+  readonly studio = new StudioClient((bytes, id, label) => this.call('studioWrite', { bytes, id, label }), () => {
     if (this.studio.ready) {
       this.isZmkKeyboard = true;
       if (this.externalEditing && !this.externalEditZmk) { this.externalEditZmk = true; this.relayLearning = false; this.syncPage(); }
     }
     this.listeners.forEach(fn => fn());
-  });
+  }, id => this.call('studioComplete', { id }));
   relayPressed: number[] = []; relayConsumer = 0;
   layer = 0; editLayer = 0; modifiers = 0; layerKey?: number; oneShotReturn?: number; oneShotKey?: number;
   momentaryPrevious?: number; momentaryKey?: number; momentaryTarget?: number; baseSnapshot?: string; layersSnapshot?: string;
@@ -84,6 +85,18 @@ export class LikiModel {
   num(key: string) { return Number(this.settings[key] ?? 0); }
   get connected() { return this.status.connected === true; }
   get relayRemaps() { return parseRelayRemaps(this.preferences.relay_remaps ?? '[]'); }
+  get relayEffect(): 'matrix' | 'ripple' { return this.preferences.relay_effect === 'ripple' ? 'ripple' : 'matrix'; }
+  async setRelayEffect(value: 'matrix' | 'ripple') {
+    await this.persist({ relay_effect: value }); this.changed();
+  }
+  get relayLayout(): 'none' | 'us-jis' | 'jis-us' {
+    const value = this.preferences.relay_layout;
+    return value === 'us-jis' || value === 'jis-us' ? value : 'none';
+  }
+  async setRelayLayout(value: string) {
+    if (!['none', 'us-jis', 'jis-us'].includes(value)) throw Error('配列変換の設定が不正です');
+    await this.call('relayLayout', { value }); this.preferences.relay_layout = value; this.changed();
+  }
   async saveRelayRemaps(rules: RelayRemap[]) {
     const value = JSON.stringify(parseRelayRemaps(JSON.stringify(rules)));
     await this.call('relayRemaps', { value }); this.preferences.relay_remaps = value; this.changed();
@@ -190,8 +203,8 @@ export class LikiModel {
   }
   async refresh() { this.acceptStatus(await this.call('status')); this.syncPage(); }
   syncPage() {
-    const studio = this.relayMode && !this.relayPaused && !this.editing && !this.settingsVisible && this.showingControls;
-    const relay = studio && (!this.externalEditing || this.relayLearning);
+    const studio = this.relayMode && this.showingControls;
+    const relay = studio && !this.relayPaused && !this.editing && !this.settingsVisible && (!this.externalEditing || this.relayLearning);
     if (!relay) { this.relayPressed = []; this.relayConsumer = 0; }
     this.send('page', { controls: this.showingControls, settings: this.settingsVisible, relay, studio, relayLearning: this.relayLearning, remap: !this.isZmkKeyboard });
   }
@@ -298,7 +311,12 @@ export class LikiModel {
     await this.setSetting('auto_key_scale_px', 0);
     await this.persist({ kle_json: this.json, overrides: JSON.stringify(this.overrides), layer_overrides: '{}', selected_saved_layout_name: null }); this.changed();
   }
+  registerStudioViewReset(reset: () => void) {
+    this.resetStudioView = reset;
+    return () => { if (this.resetStudioView === reset) this.resetStudioView = undefined; };
+  }
   async resetView() {
+    if (this.relayMode) { this.resetStudioView?.(); this.changed(); return; }
     if (this.geometry) { this.geometry.zoom = 1; this.geometry.pan = zero(); }
     await this.setSetting('key_pitch_mm', 0); await this.setSetting('auto_key_scale_px', 0); this.changed();
   }

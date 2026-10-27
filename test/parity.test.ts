@@ -275,6 +275,21 @@ test('independent trackpad scrolls and releases a held drag when interrupted', a
   t.mock.timers.tick(1000); assert.equal(sent('mouseDown').length, 1);
 });
 
+test('external layout conversion is saved separately from remaps and rejects invalid modes', async () => {
+  const { m, sent } = await fixture();
+  assert.equal(m.relayLayout, 'none');
+  const rules = [{ source: 0x70004, target: [0x70005] }];
+  await m.saveRelayRemaps(rules);
+  for (const value of ['us-jis', 'jis-us', 'none']) {
+    await m.setRelayLayout(value);
+    assert.equal(m.relayLayout, value);
+    assert.deepEqual(sent('relayLayout').at(-1), { value });
+    assert.deepEqual(m.relayRemaps, rules);
+  }
+  await assert.rejects(m.setRelayLayout('invalid'), /配列変換/);
+  assert.equal(sent('relayLayout').length, 3);
+});
+
 test('external editing keeps Studio active, pauses forwarding, and learns without forwarding', async () => {
   const { m, sent } = await fixture();
   m.status = { connected: true, relaySupported: true, remapSupported: true }; m.showingControls = true; m.relayMode = true;
@@ -289,6 +304,19 @@ test('external editing keeps Studio active, pauses forwarding, and learns withou
   m.endExternalEdit();
   assert.deepEqual(sent('page').at(-1), { controls: true, settings: false, relay: true, studio: true, relayLearning: false, remap: true });
   m.studio.dirty = true; assert.throws(() => m.endExternalEdit(), /未保存/);
+});
+
+test('menus and settings pause forwarding while keeping Studio connected', async () => {
+  const { m, sent } = await fixture();
+  m.status = { connected: true, relaySupported: true }; m.showingControls = true; m.relayMode = true;
+  m.pauseRelay(true);
+  assert.equal(sent('page').at(-1)!.studio, true); assert.equal(sent('page').at(-1)!.relay, false);
+  m.settingsVisible = true; m.pauseRelay(false);
+  assert.equal(sent('page').at(-1)!.studio, true); assert.equal(sent('page').at(-1)!.relay, false);
+  m.settingsVisible = false; m.syncPage();
+  assert.equal(sent('page').at(-1)!.studio, true); assert.equal(sent('page').at(-1)!.relay, true);
+  await m.setRelayMode(false);
+  assert.equal(sent('page').at(-1)!.studio, false); assert.equal(sent('page').at(-1)!.relay, false);
 });
 
 test('known ZMK keyboards bypass local mappings across menu pauses, until the input device changes', async () => {
