@@ -107,8 +107,7 @@ function Liki() {
     const options = model.options.filter(b => bindingInCategory(b, i));
     const at = await choose(names[i], options.map(b => b.name)); if (at !== null) await model.assign(key, options[at].name);
   };
-  const sharedEffect = model.trackpadPanelEnabled && !model.editing && !model.virtualKeyboardEnabled && !model.showKeyboardEffect;
-  const controls = !model.virtualKeyboardEnabled ? <StudioKeyboard model={model} showEffect={!sharedEffect} /> : <View style={{ flex: 1 }}>
+  const controls = !model.virtualKeyboardEnabled ? <StudioKeyboard model={model} /> : <View style={{ flex: 1 }}>
     <View style={{ flex: 1, padding: 8 }}>
       {model.editing && <><View style={{ flexDirection: 'row' }}>{[0, 1, 2, 3].map(i => <View style={{ flex: 1, opacity: i === model.editLayer ? 1 : .55 }} key={i}>
         <Button title={`レイヤー ${i}`} onPress={() => { model.editLayer = i; model.changed(); }} /></View>)}</View>
@@ -119,16 +118,16 @@ function Liki() {
     {!model.editing && <View pointerEvents="none" style={{ position: 'absolute', top: 12, left: 12, backgroundColor: colors.surface, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
       <Text accessibilityLabel={`現在のレイヤー ${model.layer}${model.syncedLayer !== undefined ? ' ZMK同期中' : ''}`} style={[styles.text, { fontSize: 12, fontWeight: 'bold' }]}>{model.syncedLayer !== undefined ? 'ZMK同期 ' : ''}L{model.layer}{model.oneShotReturn !== undefined ? '・1回' : ''}</Text></View>}
   </View>;
-  const controlScreen = model.trackpadPanelEnabled && !model.editing ? <View style={{ flex: 1 }}>
-    {sharedEffect && <View pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
+  const controlScreen = <View style={{ flex: 1 }}>
+    {model.relayMode && !model.editing && model.relayEffect !== 'none' && <View pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
       <KeyRain key={model.relayEffect} model={model} />
     </View>}
-    <View style={{ flex: 1,
+    {model.trackpadPanelEnabled && !model.editing ? <View style={{ flex: 1,
       flexDirection: ({ bottom: 'column', top: 'column-reverse', left: 'row-reverse', right: 'row' } as const)[model.trackpadPanelPosition] }}>
       <View style={{ flex: 100 - model.trackpadPanelSize, display: model.trackpadPanelSize === 100 ? 'none' : 'flex' }}>{controls}</View>
       <View style={{ flex: model.trackpadPanelSize }}><TrackpadPanel model={model} active={!menu && !dialog} /></View>
-    </View>
-  </View> : controls;
+    </View> : controls}
+  </View>;
   const connection = <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 24 }}>
     <Text style={[styles.text, { fontSize: 36, fontWeight: 'bold' }]}>Liki</Text><Text style={[styles.buttonText, { fontWeight: 'bold' }]}>Pocket HID</Text>
     <Text style={styles.text}>スマホをPCのキーボード・トラックパッドに</Text>

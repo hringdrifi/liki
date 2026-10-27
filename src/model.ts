@@ -99,12 +99,19 @@ export class LikiModel {
     return this.connected && Number.isInteger(value) && value >= 0 && value <= 31 ? value : undefined;
   }
   get relayRemaps() { return parseRelayRemaps(this.preferences.relay_remaps ?? '[]'); }
-  get relayEffect(): 'keyboard' | 'matrix' | 'ripple' {
+  get relayEffect(): 'none' | 'matrix' | 'ripple' {
     const value = this.preferences.relay_effect;
-    return value === 'matrix' || value === 'ripple' ? value : 'keyboard';
+    return value === 'none' || value === 'ripple' ? value : 'matrix';
   }
-  get showKeyboardEffect() {
-    return !this.virtualKeyboardEnabled && this.relayEffect === 'keyboard' && !!this.studio.layout &&
+  get zmkLayoutEnabled() {
+    return this.preferences.zmk_layout_enabled !== undefined ? this.preferences.zmk_layout_enabled === 'true' :
+      this.preferences.relay_effect !== 'matrix' && this.preferences.relay_effect !== 'ripple';
+  }
+  async setZmkLayoutEnabled(enabled: boolean) {
+    await this.persist({ zmk_layout_enabled: String(enabled) }); this.changed();
+  }
+  get showZmkLayout() {
+    return !this.virtualKeyboardEnabled && this.zmkLayoutEnabled && !!this.studio.layout &&
       (this.studio.activeLayer === undefined || !!this.studio.layout.layers[this.studio.activeLayer]);
   }
   get shiftBorderColor(): number { return this.settings.shift_border_color ?? 0x80cbc4; }
@@ -116,8 +123,8 @@ export class LikiModel {
     const layer = this.virtualKeyboardEnabled ? this.displayedLayer : this.studio.activeLayer;
     return this.borderColorForLayer(layer);
   }
-  async setRelayEffect(value: 'keyboard' | 'matrix' | 'ripple') {
-    await this.persist({ relay_effect: value }); this.changed();
+  async setRelayEffect(value: 'none' | 'matrix' | 'ripple') {
+    await this.persist({ relay_effect: value, zmk_layout_enabled: String(this.zmkLayoutEnabled) }); this.changed();
   }
   get relayLayout(): 'none' | 'us-jis' | 'jis-us' {
     const value = this.preferences.relay_layout;
