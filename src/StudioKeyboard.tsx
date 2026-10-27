@@ -6,12 +6,11 @@ import { Geometry } from './model';
 import type { LikiModel } from './model';
 import { colors, hex } from './Keyboard';
 import { studioKeyActive } from './zmk';
-import { KeyRain } from './KeyRain';
 import { StudioKeyboardGesture } from './studio-gesture';
 import type { Touch } from './gestures';
 
-export function StudioKeyboard({ model, selectedKey, onSelectKey, onSelectLayer, showEffect = true }: {
-  model: LikiModel; selectedKey?: number; onSelectKey?(index: number): void; onSelectLayer?(): void; showEffect?: boolean;
+export function StudioKeyboard({ model, selectedKey, onSelectKey, onSelectLayer }: {
+  model: LikiModel; selectedKey?: number; onSelectKey?(index: number): void; onSelectLayer?(): void;
 }) {
   const client = model.studio, layout = client.layout;
   const geometry = useMemo(() => layout ? new Geometry(layout.keys) : undefined, [layout]);
@@ -34,9 +33,8 @@ export function StudioKeyboard({ model, selectedKey, onSelectKey, onSelectLayer,
   };
   const displayLayer = onSelectKey ? client.layer : client.displayLayer;
   const layer = layout?.layers[displayLayer];
-  if (!layout || !onSelectKey && !model.showKeyboardEffect) return <View style={{ flex: 1 }}>
+  if (!layout || !onSelectKey && !model.showZmkLayout) return <View style={{ flex: 1 }}>
     {model.isZmkKeyboard && !!client.message && <Text style={{ color: colors.text, padding: 12 }}>{client.message}</Text>}
-    {showEffect && <KeyRain key={model.relayEffect} model={model} />}
   </View>;
   return <View style={{ flex: 1, padding: 12, gap: 8 }}>
     {layout && geometry && layer && <>

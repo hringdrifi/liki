@@ -106,12 +106,16 @@ export function Settings({ model: m, onBack, onPrivacy, choose, prompt, run }: {
     {slider('scroll_speed', 'スクロール速度', .5, 3, '倍')}{toggle('reverse_scroll', 'スクロール方向を反転', '2本指で動かしたときのスクロール方向を逆にする')}
     {toggle('trackpad_pinch_zoom', 'ピンチでズーム', '対応するPC画面へCtrl＋ホイールとして送信')}
     <Section title="外部キーボード・マウス" />
-    <Button title={`入力中の表示: ${{ keyboard: 'キーボード', matrix: 'マトリックス', ripple: 'リップル' }[m.relayEffect]}`} onPress={() => run(async () => {
-      const index = await choose('入力中の表示', ['キーボード（ZMK Studio）', 'マトリックス', 'リップル']);
-      if (index !== null) await m.setRelayEffect((['keyboard', 'matrix', 'ripple'] as const)[index]);
+    <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+      <Text style={[styles.text, { flex: 1, fontSize: 16 }]}>ZMKレイアウトを表示</Text>
+      <Switch accessibilityLabel="ZMKレイアウトを表示" value={m.zmkLayoutEnabled} onValueChange={value => run(() => m.setZmkLayoutEnabled(value))} trackColor={{ true: colors.accent }} />
+    </View>
+    <Text style={styles.muted}>ZMK Studioから取得した配置を表示します。仮想キーボードが有効な間は仮想キーボードを優先します。</Text>
+    <Button title={`入力エフェクト: ${{ none: 'なし', matrix: 'マトリックス', ripple: 'リップル' }[m.relayEffect]}`} onPress={() => run(async () => {
+      const index = await choose('入力エフェクト', ['なし', 'マトリックス', 'リップル']);
+      if (index !== null) await m.setRelayEffect((['none', 'matrix', 'ripple'] as const)[index]);
     })} />
-    <Text style={styles.muted}>ZMK Studio接続中も表示を切り替えられます。キーボードを選び、配置を取得できていない場合はマトリックスを表示します。</Text>
-    <Text style={styles.muted}>「外部＋仮想キーボード」では仮想キーボードを表示します。ZMK Studioのレイアウト表示やエフェクトは「外部キーボード・マウス」に切り替えると使えます。</Text>
+    <Text style={styles.muted}>外部キー入力のエフェクトを、キーボードやトラックパッドの背景に表示します。ZMKレイアウトの表示とは別に選べます。</Text>
     {slider('external_mouse_speed', '外部マウスの速度', .5, 3, '倍')}
     <Section title="このアプリについて" />
     <Button title="プライバシーポリシー" onPress={onPrivacy} />

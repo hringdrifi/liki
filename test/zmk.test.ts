@@ -76,22 +76,50 @@ test('Liki follows layer order rather than Studio IDs and keeps editing selectio
   assert.equal(model.studio.displayLayer, 1);
   assert.equal(model.studio.layout.layers[model.studio.displayLayer].id, 3);
   assert.equal(model.studio.layer, 0);
-  assert.equal(model.showKeyboardEffect, true);
+  assert.equal(model.showZmkLayout, true);
   await model.setRelayEffect('ripple');
-  assert.equal(model.showKeyboardEffect, false);
+  assert.equal(model.showZmkLayout, true);
+  await model.setZmkLayoutEnabled(false);
+  assert.equal(model.showZmkLayout, false);
+  assert.equal(model.relayEffect, 'ripple');
   model.acceptStatus({ zmkLayer: { bytes: [1, 0] } });
   assert.equal(model.studio.activeLayer, 0);
-  await model.setRelayEffect('keyboard');
-  assert.equal(model.showKeyboardEffect, true);
+  await model.setRelayEffect('none');
+  await model.setZmkLayoutEnabled(true);
+  assert.equal(model.relayEffect, 'none');
+  assert.equal(model.showZmkLayout, true);
   model.status.relaySupported = true;
   await model.setRelayMode(true, true);
   assert.equal(model.virtualKeyboardEnabled, true);
-  assert.equal(model.showKeyboardEffect, false);
+  assert.equal(model.showZmkLayout, false);
+  await model.setRelayEffect('ripple');
+  assert.equal(model.relayEffect, 'ripple');
+  assert.equal(model.showZmkLayout, false);
   assert.equal(model.studio.layout.layers.length, 2);
   await model.setRelayMode(true);
-  assert.equal(model.showKeyboardEffect, true);
+  assert.equal(model.showZmkLayout, true);
   model.acceptStatus({ zmkLayer: { bytes: [1, 5] } });
-  assert.equal(model.showKeyboardEffect, false); // Never label an unrelated layout as layer 5.
+  assert.equal(model.showZmkLayout, false); // Never label an unrelated layout as layer 5.
+});
+
+test('effect and ZMK layout preferences migrate independently and persist', async () => {
+  const model = new LikiModel({ invoke: async () => {}, subscribe: () => ({ remove() {} }) });
+  model.preferences = { relay_effect: 'ripple' };
+  assert.equal(model.zmkLayoutEnabled, false);
+  await model.setRelayEffect('none');
+  assert.equal(model.zmkLayoutEnabled, false);
+  assert.equal(model.relayEffect, 'none');
+  await model.setZmkLayoutEnabled(true);
+  assert.equal(model.relayEffect, 'none');
+  await model.setRelayEffect('matrix');
+  assert.equal(model.zmkLayoutEnabled, true);
+  const restored = new LikiModel({ invoke: async () => {}, subscribe: () => ({ remove() {} }) });
+  restored.preferences = { ...model.preferences };
+  assert.equal(restored.zmkLayoutEnabled, true);
+  assert.equal(restored.relayEffect, 'matrix');
+  restored.preferences = { relay_effect: 'keyboard' };
+  assert.equal(restored.zmkLayoutEnabled, true);
+  assert.equal(restored.relayEffect, 'matrix');
 });
 
 function studioGesture() {
