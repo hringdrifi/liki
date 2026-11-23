@@ -1,7 +1,7 @@
 /** Converts text typed on the phone's own keyboard into HID key taps for the connected PC. */
 export type TextLayout = 'us' | 'jis';
 export type KeyTap = { modifiers: number; code: number };
-export const TEXT_KEYS = { enter: 0x28, escape: 0x29, backspace: 0x2a, tab: 0x2b, right: 0x4f, left: 0x50, down: 0x51, up: 0x52, zenkaku: 0x35 } as const;
+export const TEXT_KEYS = { enter: 0x28, escape: 0x29, backspace: 0x2a, tab: 0x2b, space: 0x2c, right: 0x4f, left: 0x50, down: 0x51, up: 0x52, zenkaku: 0x35 } as const;
 
 const SHIFT = 2;
 // HID positions and Shift pairs match KeyboardLayoutConverter in the native modules.
