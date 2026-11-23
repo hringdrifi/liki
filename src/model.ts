@@ -1,6 +1,7 @@
 import { StudioClient } from './zmk.ts';
 import { parseRelayRemaps } from './remap.ts';
 import type { RelayRemap } from './remap.ts';
+import type { KeyTap, TextLayout } from './text-keys.ts';
 export type Data = Record<string, any>;
 export type Point = { x: number; y: number };
 export type Binding = { name: string; code: number; modifier: number; layer: number; action: string; consumer: number };
@@ -86,6 +87,20 @@ export class LikiModel {
   flag(key: string) { return this.settings[key] === true; }
   num(key: string) { return Number(this.settings[key] ?? 0); }
   get connected() { return this.status.connected === true; }
+  /** Typing with the phone's own on-screen keyboard instead of the drawn layout. */
+  get textMode() { return !this.relayMode && this.preferences.input_mode === 'text'; }
+  get textLayout(): TextLayout { return this.preferences.text_layout === 'jis' ? 'jis' : 'us'; }
+  async setTextLayout(layout: TextLayout) { await this.persist({ text_layout: layout }); this.changed(); }
+  async setTextMode() {
+    await this.persist({ input_mode: 'text', relay_virtual_keyboard: null });
+    this.relayMode = false; this.editing = false; this.setLayer(0); this.syncPage(); this.changed();
+  }
+  private textQueue: Promise<void> = Promise.resolve();
+  /** Sends taps strictly in order, even when several edits arrive before the first finishes. */
+  typeKeys(keys: KeyTap[]) {
+    if (!keys.length) return this.textQueue;
+    return this.textQueue = this.textQueue.then(async () => { for (const key of keys) await this.call('key', key); }).catch(e => this.onError(e));
+  }
   get virtualKeyboardEnabled() { return !this.relayMode || this.preferences.relay_virtual_keyboard === 'true'; }
   get syncedLayer(): number | undefined {
     return this.relayMode && this.virtualKeyboardEnabled && this.zmkLayerSupported ? this.studio.activeLayer : undefined;

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { textEdit, keysForCharacter } from '../src/text-keys.ts';
 import { LikiModel, Geometry, rotate } from '../src/model.ts';
 import type { Backend, Binding, Data, KeyShape, Point } from '../src/model.ts';
 import { KeyboardGesture, TrackpadGesture } from '../src/gestures.ts';
@@ -483,4 +484,32 @@ test('known ZMK keyboards bypass local mappings across menu pauses, until the in
   m.pauseRelay(false); assert.equal(sent('page').at(-1)!.remap, false);
   m.acceptStatus({ connected: true, relaySupported: true, keyboards: [{ id: 2 }] });
   assert.equal(m.isZmkKeyboard, false); assert.equal(sent('page').at(-1)!.remap, true);
+});
+
+test('phone keyboard mode replaces relay, persists, and sends edits in order', async () => {
+  const { m, sent, preferences } = await fixture(); m.status.relaySupported = true; m.showingControls = true;
+  await m.setRelayMode(true, true); await m.setTextMode();
+  assert.equal(m.textMode, true); assert.equal(m.relayMode, false); assert.equal(preferences.input_mode, 'text');
+  assert.equal(preferences.relay_virtual_keyboard, null); assert.equal(sent('page').at(-1)?.relay, false);
+  const before = sent('key').length;
+  void m.typeKeys(textEdit('', 'aB', m.textLayout).keys); await m.typeKeys(textEdit('aB', 'a', m.textLayout).keys);
+  assert.deepEqual(sent('key').slice(before), [{ modifiers: 0, code: 4 }, { modifiers: 2, code: 5 }, { modifiers: 0, code: 0x2a }]);
+  await m.setTextLayout('jis'); assert.equal(m.textLayout, 'jis'); assert.equal(preferences.text_layout, 'jis');
+  await m.setRelayMode(false); assert.equal(m.textMode, false); assert.equal(preferences.input_mode, null);
+});
+
+test('typed text maps to the PC layout, kana becomes romaji, and unsendable characters are skipped', () => {
+  const codes = (text: string, layout: 'us' | 'jis') => textEdit('', text, layout).keys.map(k => [k.modifiers, k.code]);
+  assert.deepEqual(codes('a Z1', 'us'), [[0, 4], [0, 0x2c], [2, 0x1d], [0, 0x1e]]);
+  assert.deepEqual(codes('@"_\\', 'us'), [[2, 0x1f], [2, 0x34], [2, 0x2d], [0, 0x31]]);
+  assert.deepEqual(codes('@"_\\|', 'jis'), [[0, 0x2f], [2, 0x1f], [2, 0x87], [0, 0x87], [2, 0x89]]);
+  const romaji = (text: string) => textEdit('', text, 'us').keys.map(k => String.fromCharCode(k.code === 0x2d ? 45 : 93 + k.code)).join('');
+  assert.equal(romaji('きゃっとコーヒー'), 'kixyaxtutoko-hi-'); assert.equal(romaji('ん'), 'nn');
+  assert.deepEqual(keysForCharacter('Ａ', 'us'), [{ modifiers: 2, code: 4 }]);
+  assert.deepEqual(textEdit('', '漢a😀', 'us'), { keys: [{ modifiers: 0, code: 4 }], skipped: ['漢', '😀'] });
+  // Replacing a kana erases one character on the PC; a character that was never sent is not erased.
+  assert.deepEqual(codes('', 'us'), []);
+  assert.deepEqual(textEdit('あか', 'あが', 'us').keys.map(k => k.code), [0x2a, 10, 4]);
+  assert.deepEqual(textEdit('a漢', 'a', 'us').keys, []);
+  for (const layout of ['us', 'jis'] as const) for (let c = 0x20; c < 0x7f; c++) assert.ok(keysForCharacter(String.fromCharCode(c), layout), String.fromCharCode(c));
 });
