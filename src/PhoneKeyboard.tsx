@@ -6,13 +6,9 @@ import { styles } from './Settings';
 import { TrackpadPanel } from './TrackpadPanel';
 import { textEdit, TEXT_KEYS } from './text-keys';
 
-type SpecialKey = readonly [title: string, label: string, code: number];
-const moveKeys: SpecialKey[] = [['Esc', 'Escape', TEXT_KEYS.escape], ['Tab', 'Tab', TEXT_KEYS.tab],
-  ['←', '左矢印', TEXT_KEYS.left], ['↓', '下矢印', TEXT_KEYS.down], ['↑', '上矢印', TEXT_KEYS.up], ['→', '右矢印', TEXT_KEYS.right]];
-// Keys that drive the PC's IME without first committing the text on the phone.
-const imeKeys: SpecialKey[] = [['変換', 'Space（PCのIMEで変換）', TEXT_KEYS.space], ['⌫', 'Backspace', TEXT_KEYS.backspace],
-  ['確定', 'Enter（PCのIMEで確定）', TEXT_KEYS.enter]];
-const zenkaku: SpecialKey = ['半/全', '半角/全角', TEXT_KEYS.zenkaku];
+const specialKeys: [title: string, label: string, code: number][] = [['Esc', 'Escape', TEXT_KEYS.escape], ['Tab', 'Tab', TEXT_KEYS.tab],
+  ['←', '左矢印', TEXT_KEYS.left], ['↓', '下矢印', TEXT_KEYS.down], ['↑', '上矢印', TEXT_KEYS.up], ['→', '右矢印', TEXT_KEYS.right],
+  ['⌫', 'Backspace', TEXT_KEYS.backspace], ['Enter', 'Enter', TEXT_KEYS.enter]];
 
 /** Sends what is typed with the phone's own keyboard to the PC, one edit at a time. */
 export function PhoneKeyboard({ model, active, run }: { model: LikiModel; active: boolean; run(work: () => Promise<any>): void }) {
@@ -33,12 +29,12 @@ export function PhoneKeyboard({ model, active, run }: { model: LikiModel; active
         onChangeText={changed} onSubmitEditing={() => special(TEXT_KEYS.enter)}
         onKeyPress={e => { if (e.nativeEvent.key === 'Backspace' && !sent.current) void model.typeKeys([{ modifiers: 0, code: TEXT_KEYS.backspace }]); }}
         style={[styles.text, { fontSize: 18, minHeight: 48, borderWidth: 1, borderColor: colors.accent, borderRadius: 6, paddingHorizontal: 10, backgroundColor: colors.surface }]} />
-      {[moveKeys, [...(jis ? [zenkaku] : []), ...imeKeys]].map((keys, row) => <View key={row} style={{ flexDirection: 'row', gap: 4 }}>
-        {keys.map(([title, label, code]) =>
+      <View style={{ flexDirection: 'row', gap: 4 }}>
+        {[...specialKeys, ...(jis ? [['半/全', '半角/全角', TEXT_KEYS.zenkaku] as const] : [])].map(([title, label, code]) =>
           <Pressable key={title} accessibilityRole="button" accessibilityLabel={label} onPress={() => special(code)}
             style={[styles.button, { flex: 1, minHeight: 40, padding: 2, marginVertical: 0 }]}>
             <Text style={[styles.buttonText, { fontSize: 13 }]} numberOfLines={1}>{title}</Text></Pressable>)}
-      </View>)}
+      </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <Pressable accessibilityRole="button" accessibilityLabel={`PCのキーボード配列: ${jis ? 'JIS' : 'US'}。タップで切り替え`}
           onPress={() => run(() => model.setTextLayout(jis ? 'us' : 'jis'))} style={[styles.button, { minHeight: 40, paddingHorizontal: 12, marginVertical: 0 }]}>
