@@ -9,7 +9,6 @@ import { Keyboard, colors } from './src/Keyboard';
 import { KeyboardIndicators } from './src/KeyboardIndicators';
 import { StudioKeyboard } from './src/StudioKeyboard';
 import { TrackpadPanel } from './src/TrackpadPanel';
-import { PhoneKeyboard } from './src/PhoneKeyboard';
 import { KeyRain } from './src/KeyRain';
 import { ExternalKeyEditor } from './src/ExternalKeyEditor';
 import { bindingCategories, bindingInCategory } from './src/key-categories';
@@ -108,14 +107,7 @@ function Liki() {
     const options = model.options.filter(b => bindingInCategory(b, i));
     const at = await choose(names[i], options.map(b => b.name)); if (at !== null) await model.assign(key, options[at].name);
   };
-  const inputModes = [
-    { title: '外部キーボード・マウス', relay: true, checked: model.relayMode && !model.virtualKeyboardEnabled, select: () => model.setRelayMode(true, false) },
-    { title: '仮想キーボード・タッチパッド', relay: false, checked: !model.relayMode && !model.textMode, select: () => model.setRelayMode(false) },
-    { title: '外部＋仮想キーボード', relay: true, checked: model.relayMode && model.virtualKeyboardEnabled, select: () => model.setRelayMode(true, true) },
-    { title: 'スマホのキーボード', relay: false, checked: model.textMode, select: () => model.setTextMode() },
-  ];
-  const controls = model.textMode ? <PhoneKeyboard model={model} active={!menu && !dialog} run={run} /> :
-    !model.virtualKeyboardEnabled ? <StudioKeyboard model={model} /> : <View style={{ flex: 1 }}>
+  const controls = !model.virtualKeyboardEnabled ? <StudioKeyboard model={model} /> : <View style={{ flex: 1 }}>
     <View style={{ flex: 1, padding: 8 }}>
       {model.editing && <><View style={{ flexDirection: 'row' }}>{[0, 1, 2, 3].map(i => <View style={{ flex: 1, opacity: i === model.editLayer ? 1 : .55 }} key={i}>
         <Button title={`レイヤー ${i}`} onPress={() => { model.editLayer = i; model.changed(); }} /></View>)}</View>
@@ -187,11 +179,11 @@ function Liki() {
       <ScrollView contentContainerStyle={{ padding: 12 }}>
         <Text style={[styles.text, { fontSize: 24, fontWeight: 'bold', padding: 12 }]}>Liki</Text>
         <Section title="入力方法" />
-        {inputModes.filter(mode => !mode.relay || model.status.relaySupported !== false).map(({ title, checked, select }) =>
-          <Pressable key={title} accessibilityRole="radio" accessibilityLabel={title} accessibilityState={{ checked }}
-            onPress={() => { if (checked) setMenu(false); else action(select); }}
-            style={[styles.button, { alignItems: 'flex-start', paddingHorizontal: 12 }, checked && { backgroundColor: '#24736d' }]}>
-            <Text style={[styles.buttonText, { color: checked ? colors.text : colors.accent }]}>{checked ? '●' : '○'} {title}</Text>
+        {([[true, false, '外部キーボード・マウス'], [false, true, '仮想キーボード・タッチパッド'], [true, true, '外部＋仮想キーボード']] as const).filter(([relay]) => !relay || model.status.relaySupported !== false).map(([relay, virtual, title]) =>
+          <Pressable key={title} accessibilityRole="radio" accessibilityLabel={title} accessibilityState={{ checked: model.relayMode === relay && model.virtualKeyboardEnabled === virtual }}
+            onPress={() => { if (model.relayMode === relay && model.virtualKeyboardEnabled === virtual) setMenu(false); else action(() => model.setRelayMode(relay, virtual)); }}
+            style={[styles.button, { alignItems: 'flex-start', paddingHorizontal: 12 }, model.relayMode === relay && model.virtualKeyboardEnabled === virtual && { backgroundColor: '#24736d' }]}>
+            <Text style={[styles.buttonText, { color: model.relayMode === relay && model.virtualKeyboardEnabled === virtual ? colors.text : colors.accent }]}>{model.relayMode === relay && model.virtualKeyboardEnabled === virtual ? '●' : '○'} {title}</Text>
           </Pressable>)}
         {model.relayMode && <><Section title="外部機器" />
           <Text style={[styles.text, { padding: 12 }]}>接続された入力デバイス</Text>
@@ -209,7 +201,7 @@ function Liki() {
             if (index !== null) await model.setRelayLayout(['none', 'us-jis', 'jis-us'][index]);
           })} />
           {model.isZmkKeyboard && <Button align="left" title="ZMKレイアウトを再取得" onPress={() => action(() => model.call('studioRetry'))} />}</>}
-        {model.virtualKeyboardEnabled && !model.textMode && <>
+        {model.virtualKeyboardEnabled && <>
           <Section title="レイアウト" />
           {model.selectedName && <Text style={styles.text}>保存: {model.selectedName}</Text>}
           <Button align="left" title="レイアウトを選択" onPress={() => action(chooseLayout)} />
@@ -217,7 +209,7 @@ function Liki() {
           <Button align="left" title="現在のレイアウトを保存" onPress={() => action(saveLayout)} />
           <Button align="left" title="保存したレイアウトを削除" disabled={!model.saved.length} onPress={() => action(deleteLayout)} />
         </>}
-        {!model.textMode && <Button align="left" title="表示をリセット" onPress={() => action(() => model.resetView())} />}
+        <Button align="left" title="表示をリセット" onPress={() => action(() => model.resetView())} />
         <Section title="共通" />
         <Button align="left" title="設定" onPress={() => { setMenu(false); model.settingsVisible = true; model.syncPage(); model.changed(); }} />
         <Button align="left" title="PCとの接続を切断" onPress={() => action(() => model.call('disconnect'))} /></ScrollView></SafeAreaView></View>}
