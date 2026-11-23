@@ -6,6 +6,7 @@ import { Geometry } from './model';
 import type { LikiModel } from './model';
 import { colors, hex } from './Keyboard';
 import { studioKeyActive } from './zmk';
+import { studioKeyLabel } from './studio-label';
 import { StudioKeyboardGesture } from './studio-gesture';
 import type { Touch } from './gestures';
 
@@ -56,12 +57,23 @@ export function StudioKeyboard({ model, selectedKey, onSelectKey, onSelectLayer 
           <G transform={`translate(${geometry.origin.x},${geometry.origin.y}) scale(${geometry.scale})`}>
             {layout.keys.map(key => {
               const binding = layer.keys[key.index], active = selectedKey === key.index || studioKeyActive(binding, model.relayPressed, model.relayConsumer);
-              const lines = binding.label.split(' / '), size = Math.min(.22, (key.w - .12) / Math.max(2, ...lines.map(l => l.length * .6)));
+              const { lines, size, badge } = studioKeyLabel(binding.label, key.w - .16, key.h - .16), textScale = geometry.scale;
+              const badgeHeight = Math.min(.28, key.h * .28), badgeWidth = Math.min(.55, key.w - .16);
               return <G key={key.index} transform={`rotate(${key.rotation},${key.rx},${key.ry})`}>
                 <Rect x={key.x + .025} y={key.y + .025} width={key.w - .05} height={key.h - .05} rx={.08}
                   fill={active ? '#24736d' : colors.surface} stroke={!onSelectKey && (model.shiftActive || client.activeLayer !== undefined) ? hex(model.borderColorForLayer(client.activeLayer)) : active ? colors.accent : '#657789'} strokeWidth={.025} />
-                {lines.map((line, i) => <SvgText key={i} x={key.x + key.w / 2} y={key.y + key.h / 2 + size * (.3 + (i - (lines.length - 1) / 2) * 1.2)}
-                  fill={colors.text} fontSize={size} textAnchor="middle">{line}</SvgText>)}
+                <G transform={`scale(${1 / textScale})`}>
+                  {badge && <>
+                    <Rect x={(key.x + (key.w - badgeWidth) / 2) * textScale} y={(key.y + key.h * .18) * textScale}
+                      width={badgeWidth * textScale} height={badgeHeight * textScale} rx={.06 * textScale}
+                      fill={colors.background} stroke={colors.accent} strokeWidth={.012 * textScale} />
+                    <SvgText x={(key.x + key.w / 2) * textScale} y={(key.y + key.h * .18 + badgeHeight * .72) * textScale}
+                      fill={colors.accent} fontSize={Math.min(.16, badgeHeight * .6, badgeWidth / (badge.length * .65)) * textScale} textAnchor="middle">{badge}</SvgText>
+                  </>}
+                  {lines.map((line, i) => <SvgText key={i} x={(key.x + key.w / 2) * textScale}
+                    y={(key.y + key.h * (badge ? .68 : .5) + size * (.3 + (i - (lines.length - 1) / 2) * 1.2)) * textScale}
+                    fill={colors.text} fontSize={size * textScale} textAnchor="middle">{line}</SvgText>)}
+                </G>
               </G>;
             })}
           </G>

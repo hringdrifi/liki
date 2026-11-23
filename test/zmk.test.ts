@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { field as f, frame, protobuf, StudioFrames, physicalLayout, StudioClient, studioBinding, studioKeyActive } from '../src/zmk.ts';
+import { field as f, frame, protobuf, StudioFrames, physicalLayout, StudioClient, studioBinding, studioKeyActive, usageLabel } from '../src/zmk.ts';
+import { studioKeyLabel } from '../src/studio-label.ts';
 import { LikiModel, Geometry, rotate, KEY_PITCH_MIN_MM, KEY_PITCH_MAX_MM } from '../src/model.ts';
 import { StudioKeyboardGesture } from '../src/studio-gesture.ts';
 import { bindingUsage, expandUsage, parseRelayRemaps } from '../src/remap.ts';
@@ -229,6 +230,34 @@ test('Studio labels and highlighting use behavior metadata, modifiers and consum
   assert.equal(studioKeyActive({ label: '', usages: [0x02070004] }, [4, 0xe1], 0), true);
   assert.equal(studioKeyActive({ label: '', usages: [0xc00e9] }, [], 0xe9), true);
   assert.deepEqual(studioBinding(msg(binding)).usages, []);
+});
+
+test('Studio legends name modifiers and retain the layer of a layer/tap binding', () => {
+  assert.equal(usageLabel(0x02070004), 'Shift+A');
+  assert.equal(usageLabel(0x05070006), 'Ctrl+Alt+C');
+  assert.equal(usageLabel(0x80070028), 'R Win/Cmd+Enter');
+  assert.equal(usageLabel(0x700e5), 'R Shift');
+  const layerTap = msg([...f(2, text('Layer Tap')), ...f(3, [...f(1, f(6, [])), ...f(2, f(5, []))])]);
+  assert.deepEqual(studioBinding(msg([...f(1, 2), ...f(2, 1), ...f(3, 0x7002c)]), layerTap),
+    { label: 'Layer 1 / Space', usages: [0x7002c] });
+  assert.equal(studioBinding(msg([...f(1, 2), ...f(2, 0), ...f(3, 0x7002c)]), layerTap).label, 'Layer 0 / Space');
+  const momentary = msg([...f(2, text('Momentary Layer')), ...f(3, f(1, f(6, [])))]);
+  assert.equal(studioBinding(msg([...f(1, 2), ...f(2, 1)]), momentary).label, 'Momentary Layer 1, 0');
+});
+
+test('Studio keycaps abbreviate known names and wrap without losing custom labels', () => {
+  assert.deepEqual(studioKeyLabel('Enter', .84, .84), { lines: ['Enter'], size: .22 });
+  assert.deepEqual(studioKeyLabel('Backspace', .84, .84).lines, ['Bksp']);
+  assert.deepEqual(studioKeyLabel('Page Down', .84, .84).lines, ['PgDn']);
+  assert.deepEqual(studioKeyLabel('Ctrl+Shift+A', .84, .84).lines, ['Ctrl+', 'Shift+', 'A']);
+  const layerTap = studioKeyLabel('Layer 1 / Space', .84, .84);
+  assert.deepEqual(layerTap.lines, ['Space']);
+  assert.equal(layerTap.badge, 'L1');
+  assert.equal(studioKeyLabel('Layer 0 / Space', .84, .84).badge, 'L0');
+  assert.deepEqual(studioKeyLabel('custom_behavior 1, 2', .84, .84).lines, ['custom', 'behavior', '1, 2']);
+  assert.deepEqual(studioKeyLabel('Numpad +', .84, .84).lines, ['Num +']);
+  const shortKey = studioKeyLabel('Ctrl+Shift+A', .84, .3);
+  assert.ok(shortKey.size * shortKey.lines.length * 1.2 <= .3);
 });
 
 test('Bifrost custom symbol keys highlight both mod-morph outputs without guessing other boards', () => {

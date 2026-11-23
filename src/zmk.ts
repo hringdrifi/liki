@@ -99,8 +99,10 @@ export function physicalLayout(response: Message) {
 export function usageLabel(usage: number) {
   const page = (usage >>> 16) & 255, code = usage & 65535, mods = usage >>> 24;
   const binding = iosBindings.find(b => page === 7 ? b.code === code && !b.modifier : page === 12 && b.consumer === code);
-  const name = page === 7 && code >= 0xe0 && code <= 0xe7 ? ['L Ctrl', 'L Shift', 'L Alt', 'L GUI', 'R Ctrl', 'R Shift', 'R Alt', 'R GUI'][code - 0xe0] : binding?.name ?? `HID ${page}:${code}`;
-  return `${mods ? `Mod ${mods}+` : ''}${name}`;
+  const name = page === 7 && code >= 0xe0 && code <= 0xe7 ? ['L Ctrl', 'L Shift', 'L Alt', 'L Win/Cmd', 'R Ctrl', 'R Shift', 'R Alt', 'R Win/Cmd'][code - 0xe0] : binding?.name ?? `HID ${page}:${code}`;
+  const modifiers = ['Ctrl', 'Shift', 'Alt', 'Win/Cmd', 'R Ctrl', 'R Shift', 'R Alt', 'R Win/Cmd']
+    .filter((_, index) => mods & (1 << index));
+  return [...modifiers, name].join('+');
 }
 export function studioBinding(binding: Message, details?: Message, layoutName?: string): StudioKey {
   const params = [number(binding, 2), number(binding, 3)];
@@ -115,7 +117,14 @@ export function studioBinding(binding: Message, details?: Message, layoutName?: 
     if (name === 'us_backslash') return { label: '\\', usages: [0x70087, 0x02070089] };
     if (name === 'us_semicolon') return { label: ';', usages: [0x70033, 0x70034] };
   }
-  return { label: usages.length ? usages.map(usageLabel).join(' / ') : `${name}${params.some(Boolean) ? ` ${params.join(', ')}` : ''}`, usages };
+  const labels = [1, 2].flatMap(p => {
+    const options = metadata.flatMap(set => children(set, p));
+    const value = params[p - 1];
+    if (usageParams.includes(p) && [7, 12].includes((value >>> 16) & 255) && (value & 65535)) return [usageLabel(value)];
+    if (options.some(option => option.has(6))) return [`Layer ${value}`];
+    return [];
+  });
+  return { label: usages.length ? labels.join(' / ') : `${name}${params.some(Boolean) ? ` ${params.join(', ')}` : ''}`, usages };
 }
 export function studioKeyActive(key: StudioKey, pressed: number[], consumer: number) {
   return key.usages.some(usage => {
