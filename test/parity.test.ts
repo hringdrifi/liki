@@ -506,7 +506,11 @@ test('typed text maps to the PC layout, kana becomes romaji, and unsendable char
   const romaji = (text: string) => textEdit('', text, 'us').keys.map(k => String.fromCharCode(k.code === 0x2d ? 45 : 93 + k.code)).join('');
   assert.equal(romaji('きゃっとコーヒー'), 'kixyaxtutoko-hi-'); assert.equal(romaji('ん'), 'nn');
   assert.deepEqual(keysForCharacter('Ａ', 'us'), [{ modifiers: 2, code: 4 }]);
-  assert.deepEqual(textEdit('', '漢a😀', 'us'), { keys: [{ modifiers: 0, code: 4 }], skipped: ['漢', '😀'] });
+  assert.deepEqual(textEdit('', '漢a😀', 'us'), { keys: [{ modifiers: 0, code: 4 }], skipped: ['漢', '😀'], converted: false });
+  // Converting on the phone asks the PC to convert instead of erasing what it is composing.
+  for (const [from, to] of [['かんじ', '漢字'], ['abたべる', 'ab食べる']])
+    assert.deepEqual(textEdit(from, to, 'us'), { keys: [{ modifiers: 0, code: 0x2c }], skipped: [], converted: true });
+  assert.equal(textEdit('かんじ', 'カンジ', 'us').converted, false);
   // Replacing a kana erases one character on the PC; a character that was never sent is not erased.
   assert.deepEqual(codes('', 'us'), []);
   assert.deepEqual(textEdit('あか', 'あが', 'us').keys.map(k => k.code), [0x2a, 10, 4]);

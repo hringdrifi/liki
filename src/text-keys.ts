@@ -49,15 +49,19 @@ export function keysForCharacter(character: string, layout: TextLayout): KeyTap[
 /**
  * Key taps that turn `previous` into `next` on the PC, assuming its caret is at the end.
  * Characters that were never sent are not erased either; they are reported in `skipped`.
+ * When text that was sent is replaced by text that cannot be sent, the phone's keyboard has
+ * converted it (kana to kanji); `converted` is set and the PC gets Space to convert there instead.
  */
-export function textEdit(previous: string, next: string, layout: TextLayout): { keys: KeyTap[]; skipped: string[] } {
+export function textEdit(previous: string, next: string, layout: TextLayout): { keys: KeyTap[]; skipped: string[]; converted: boolean } {
   const before = Array.from(previous), after = Array.from(next), keys: KeyTap[] = [], skipped: string[] = [];
   let same = 0;
   while (same < before.length && same < after.length && before[same] === after[same]) same++;
   for (const c of before.slice(same)) if (keysForCharacter(c, layout)) keys.push({ modifiers: 0, code: TEXT_KEYS.backspace });
+  const erased = keys.length;
   for (const c of after.slice(same)) {
     const taps = keysForCharacter(c, layout);
     if (taps) keys.push(...taps); else skipped.push(c);
   }
-  return { keys, skipped };
+  if (erased && skipped.length) return { keys: [{ modifiers: 0, code: TEXT_KEYS.space }], skipped: [], converted: true };
+  return { keys, skipped, converted: false };
 }
