@@ -1,4 +1,4 @@
-import { kanaActionKeys, kanaTaps, variantKana } from './kana-flick.ts';
+import { kanaActionKeys, kanaPunctuationKey, kanaTaps, variantKana } from './kana-flick.ts';
 import type { KanaVariantAction } from './kana-flick.ts';
 import { StudioClient } from './zmk.ts';
 import { parseRelayRemaps } from './remap.ts';
@@ -86,6 +86,7 @@ export class LikiModel {
   private virtualKeyQueue: Promise<void> = Promise.resolve();
   private virtualKeyConnection = 0;
   private lastKana?: string;
+  private lastPunctuationTapAt?: number;
   private kanaEditBoundary = 0;
   constructor(native: Backend) { this.native = native; }
   get displayedLayer() { return this.editing ? this.editLayer : this.layer; }
@@ -379,14 +380,34 @@ export class LikiModel {
   sendKana(character: string) {
     const keys = kanaTaps(character);
     if (!this.connected || !keys.length) return;
+    this.lastPunctuationTapAt = undefined;
     this.lastKana = character;
     this.queueVirtualKeys(keys);
   }
+  tapKanaPunctuation() {
+    if (!this.connected) return;
+    const now = Date.now();
+    const previous = this.lastKana;
+    const index = previous ? kanaPunctuationKey.indexOf(previous) : -1;
+    let replacement: string | undefined;
+    if (previous && index >= 0 && this.lastPunctuationTapAt !== undefined && now - this.lastPunctuationTapAt < 700) {
+      const next = kanaPunctuationKey.charAt((index + 1) % kanaPunctuationKey.length);
+      replacement = this.replaceLastKana(previous, next);
+    } else {
+      this.sendKana(kanaPunctuationKey.charAt(0));
+    }
+    this.lastPunctuationTapAt = now;
+    return replacement;
+  }
   changeLastKana(variant: KanaVariantAction) {
+    this.lastPunctuationTapAt = undefined;
     const previous = this.lastKana;
     if (!this.connected || !previous) return;
     const next = variantKana(previous, variant);
     if (next === previous) return;
+    return this.replaceLastKana(previous, next);
+  }
+  private replaceLastKana(previous: string, next: string) {
     this.lastKana = next;
     this.queueVirtualKeys([{ code: kanaActionKeys.削除, modifiers: 0 }, ...kanaTaps(next)], this.kanaEditBoundary);
     return `${previous} → ${next}`;

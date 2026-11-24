@@ -53,7 +53,7 @@ test('kana flick selects the Japanese direction and maps kana to HID taps', () =
   assert.equal(variantKana('が', 'voiced'), 'か');
   assert.equal(variantKana('ば', 'semiVoiced'), 'ぱ');
   assert.equal(variantKana('か', 'small'), 'か');
-  assert.deepEqual(Array.from('かがはばぱつづっやゃな', kana => variantKana(kana, 'cycle')), Array.from('がかばぱはづっつゃやな'));
+  assert.deepEqual(Array.from('かがはばぱつっづうぅゔやゃな', kana => variantKana(kana, 'cycle')), Array.from('がかばぱはっづつぅゔうゃやな'));
   for (const row of kanaRows) for (const key of row) {
     if (!['゛゜小', '記号', '英数'].includes(key) && !Object.hasOwn(kanaActionKeys, key)) {
       for (const kana of key.trim()) if (kana !== ' ') assert.ok(kanaTaps(kana).length, kana);
@@ -113,6 +113,29 @@ test('repeated taps on the kana variant key cycle through all forms before trans
   assert.equal(m.changeLastKana('cycle'), 'ぱ → は');
   await m.waitForVirtualKeys();
   assert.deepEqual(sent('key').map(key => key.code), [11, 4, 0x2a, 5, 4, 0x2a, 19, 4, 0x2a, 11, 4]);
+});
+
+test('rapid punctuation taps replace the previous mark until a pause or another key', async t => {
+  let now = 0;
+  t.mock.method(Date, 'now', () => now);
+  const { m, sent } = await fixture();
+  m.acceptStatus({ connected: true, address: 'PC' });
+  assert.equal(m.tapKanaPunctuation(), undefined);
+  for (const replacement of ['、 → 。', '。 → ？', '？ → ！', '！ → ・', '・ → 、']) {
+    now += 600;
+    assert.equal(m.tapKanaPunctuation(), replacement);
+  }
+  now += 700;
+  assert.equal(m.tapKanaPunctuation(), undefined);
+  m.sendKana('。');
+  assert.equal(m.tapKanaPunctuation(), undefined);
+  m.sendVirtualKeys([{ code: kanaActionKeys.確定, modifiers: 0 }]);
+  assert.equal(m.tapKanaPunctuation(), undefined);
+  await m.waitForVirtualKeys();
+  assert.deepEqual(sent('key').map(({ code, modifiers }) => [code, modifiers]), [
+    [0x36, 0], [0x2a, 0], [0x37, 0], [0x2a, 0], [0x38, 2], [0x2a, 0], [0x1e, 2],
+    [0x2a, 0], [0x38, 0], [0x2a, 0], [0x36, 0], [0x36, 0], [0x37, 0], [0x36, 0], [0x28, 0], [0x36, 0],
+  ]);
 });
 
 test('kana replacement does not erase a character after the trackpad or relay changes the input', async () => {

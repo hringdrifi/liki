@@ -6,11 +6,12 @@ export const imeOffKey = { code: 0x91, modifiers: 0 }; // Keyboard LANG2
 
 export const directions: FlickDirection[] = ['center', 'left', 'up', 'right', 'down'];
 export const kanaActionKeys: Record<string, number> = { 取消: 0x29, 削除: 0x2a, 左: 0x50, 右: 0x4f, 変換: 0x2c, 確定: 0x28 };
+export const kanaPunctuationKey = '、。？！・';
 export const kanaRows = [
   ['取消', 'あいうえお', 'かきくけこ', 'さしすせそ', '削除'],
   ['左', 'たちつてと', 'なにぬねの', 'はひふへほ', '右'],
   ['記号', 'まみむめも', 'や ゆ よ', 'らりるれろ', '変換'],
-  ['英数', '゛゜小', 'わをんー ', '、。？！・', '確定'],
+  ['英数', '゛゜小', 'わをんー ', kanaPunctuationKey, '確定'],
 ];
 
 const kanaSymbols = [
@@ -35,9 +36,9 @@ export function kanaSymbolKeys(layout: 'jis' | 'us') {
 }
 
 const variants: Record<Exclude<KanaVariantAction, 'cycle'>, [string, string]> = {
+  small: ['あいうえおつやゆよわ', 'ぁぃぅぇぉっゃゅょゎ'],
   voiced: ['うかきくけこさしすせそたちつてとはひふへほ', 'ゔがぎぐげござじずぜぞだぢづでどばびぶべぼ'],
   semiVoiced: ['はひふへほ', 'ぱぴぷぺぽ'],
-  small: ['あいうえおつやゆよわ', 'ぁぃぅぇぉっゃゅょゎ'],
 };
 
 const romaji = new Map<string, string>(Object.entries({

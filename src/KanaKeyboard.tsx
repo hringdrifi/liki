@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { GestureResponderEvent, TextStyle } from 'react-native';
 import { colors } from './Keyboard';
-import { directions, flickDirection, kanaActionKeys, kanaRows } from './kana-flick';
+import { directions, flickDirection, kanaActionKeys, kanaPunctuationKey, kanaRows } from './kana-flick';
 import type { FlickDirection, KanaVariantAction } from './kana-flick';
 import type { LikiModel } from './model';
 
@@ -29,9 +29,13 @@ export function KanaKeyboard({ model, active, onSymbols, onAlphanumeric }: {
       setReplacement(model.changeLastKana(variantKeys[character]));
       return;
     }
-    model.sendKana(character);
     setShowSpace(false);
-    setReplacement(undefined);
+    if (character === kanaPunctuationKey[0]) {
+      setReplacement(model.tapKanaPunctuation());
+    } else {
+      model.sendKana(character);
+      setReplacement(undefined);
+    }
   };
   const directionFor = (event: GestureResponderEvent, key: string) => {
     const start = touch.current;
