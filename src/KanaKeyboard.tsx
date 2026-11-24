@@ -17,6 +17,7 @@ export function KanaKeyboard({ model, active, onSymbols, onAlphanumeric }: {
   model: LikiModel; active: boolean; onSymbols(): void; onAlphanumeric(): void;
 }) {
   const [replacement, setReplacement] = useState<string>();
+  const [showSpace, setShowSpace] = useState(false);
   const [preview, setPreview] = useState<{ key: string; direction: FlickDirection }>();
   const touch = useRef<{ key: string; x: number; y: number; id: number } | undefined>(undefined);
   const reset = () => { touch.current = undefined; setPreview(undefined); };
@@ -29,6 +30,7 @@ export function KanaKeyboard({ model, active, onSymbols, onAlphanumeric }: {
       return;
     }
     model.sendKana(character);
+    setShowSpace(false);
     setReplacement(undefined);
   };
   const directionFor = (event: GestureResponderEvent, key: string) => {
@@ -42,7 +44,10 @@ export function KanaKeyboard({ model, active, onSymbols, onAlphanumeric }: {
     model.haptic();
     if (key === '記号') onSymbols();
     else if (key === '英数') onAlphanumeric();
-    else model.sendVirtualKeys([{ code: kanaActionKeys[key], modifiers: 0 }]);
+    else {
+      model.sendVirtualKeys([{ code: kanaActionKeys[key], modifiers: 0 }]);
+      if (key === '確定') setShowSpace(true);
+    }
   };
 
   return <View style={styles.panel}>
@@ -53,9 +58,10 @@ export function KanaKeyboard({ model, active, onSymbols, onAlphanumeric }: {
     </View>
     {kanaRows.map(row => <View key={row[1]} style={[styles.row, preview && row.includes(preview.key) && styles.raised]}>
       {row.map(key => {
-        if (key === '記号' || key === '英数' || Object.hasOwn(kanaActionKeys, key)) return <Pressable key={key} accessibilityRole="button" accessibilityLabel={key} disabled={!active}
+        const isSpace = key === '変換' && showSpace;
+        if (key === '記号' || key === '英数' || Object.hasOwn(kanaActionKeys, key)) return <Pressable key={key} accessibilityRole="button" accessibilityLabel={isSpace ? 'スペース' : key} disabled={!active}
           onPress={() => special(key)} style={({ pressed }) => [styles.key, pressed && styles.keyActive]}>
-          <Text style={styles.action} numberOfLines={1} adjustsFontSizeToFit>{key === '左' ? '←' : key === '右' ? '→' : key}</Text>
+          <Text style={styles.action} numberOfLines={1} adjustsFontSizeToFit>{isSpace ? '␣' : key === '左' ? '←' : key === '右' ? '→' : key}</Text>
         </Pressable>;
         const characters = Array.from(key);
         const isVariantKey = key === '゛゜小';
