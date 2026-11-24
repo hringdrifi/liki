@@ -6,23 +6,30 @@ import { backend, unavailable } from './src/native';
 import { LikiModel } from './src/model';
 import type { KeyShape, Data } from './src/model';
 import { Keyboard, colors } from './src/Keyboard';
+import { KanaKeyboard } from './src/KanaKeyboard';
+import { AlphanumericKeyboard } from './src/AlphanumericKeyboard';
 import { KeyboardIndicators } from './src/KeyboardIndicators';
 import { StudioKeyboard } from './src/StudioKeyboard';
 import { TrackpadPanel } from './src/TrackpadPanel';
 import { KeyRain } from './src/KeyRain';
 import { ExternalKeyEditor } from './src/ExternalKeyEditor';
 import { bindingCategories, bindingInCategory } from './src/key-categories';
+import { imeOffKey, imeOnKey, kanaSymbolKeys } from './src/kana-flick';
 import { Settings, Button, Section, styles } from './src/Settings';
 import type { Choose, Prompt } from './src/Settings';
 
 type Dialog = { title: string; items: string[]; resolve(value: number | null): void } |
   { title: string; text: string; validate(s: string): boolean; resolve(value: string | null): void };
+const virtualLayouts = [['kana', 'かな'], ['alphanumeric', '英数'], ['kle', 'KLE']] as const;
+type VirtualLayout = typeof virtualLayouts[number][0];
 
 export default function App() { return <SafeAreaProvider><Liki /></SafeAreaProvider>; }
 function Liki() {
   const insets = useSafeAreaInsets();
   const model = useRef(new LikiModel(backend)).current, [, render] = useState(0);
   const [menu, setMenu] = useState(false), [dialog, setDialog] = useState<Dialog | null>(null);
+  const [selectedLayout, setSelectedLayout] = useState<VirtualLayout>();
+  const virtualLayout = selectedLayout ?? (model.hasKleLayout ? 'kle' : 'alphanumeric');
   const dialogCompletion = useRef<(() => void) | null>(null);
   const menuStart = useRef({ x: 0, y: 0 });
   const error = (e: unknown) => Alert.alert('Liki', String(e));
@@ -31,7 +38,10 @@ function Liki() {
   useEffect(() => {
     const update = () => render(n => n + 1); model.listeners.add(update);
     if (!unavailable) void model.initialize();
-    const app = AppState.addEventListener('change', state => { if (state === 'active' && model.initialized) run(() => model.refresh()); });
+    const app = AppState.addEventListener('change', state => {
+      if (state !== 'active') model.forgetLastKana();
+      else if (model.initialized) run(() => model.refresh());
+    });
     return () => { app.remove(); model.listeners.delete(update); model.dispose(); };
   }, [model]);
   useEffect(() => {
@@ -68,13 +78,13 @@ function Liki() {
     if (name === null) return;
     if (!model.saved.some(e => e.name.toLowerCase() === name.toLowerCase()) || await confirm(`「${name}」を上書きしますか？`)) await model.saveLayout(name);
   };
-  const chooseLayout = async () => {
-    const entries = model.saved, i = await choose('レイアウトを選択', ['標準トラックパッド', '標準キーボード（TKL）', ...entries.map(e => `保存: ${e.name}`),
-      'KLE JSONファイルを開く']);
+  const chooseKleLayout = async () => {
+    const entries = model.saved, i = await choose('KLEレイアウトを選択', [...entries.map(e => `保存: ${e.name}`), 'KLE JSONファイルを開く']);
     if (i === null) return;
-    if (i < 2) await model.applyLayout(await model.call('asset', { name: i === 0 ? 'ghosted-trackpad.json' : 'default-kle.json' }));
-    else if (i < entries.length + 2) await model.restoreLayout(entries[i - 2]);
-    else { const value = await model.call('pickFile'); if (value !== null) await model.applyLayout(value); }
+    await model.waitForVirtualKeys();
+    if (i < entries.length) await model.restoreLayout(entries[i]);
+    else { const value = await model.call('pickFile'); if (value === null) return; await model.applyLayout(value); }
+    setSelectedLayout('kle');
   };
   const deleteLayout = async () => {
     const entries = model.saved;
@@ -107,7 +117,41 @@ function Liki() {
     const options = model.options.filter(b => bindingInCategory(b, i));
     const at = await choose(names[i], options.map(b => b.name)); if (at !== null) await model.assign(key, options[at].name);
   };
+  const switchLayout = async (layout: VirtualLayout) => {
+    if (layout === 'kle') {
+      if (virtualLayout === layout) return;
+      if (!model.hasKleLayout) { await chooseKleLayout(); return; }
+    } else model.sendVirtualKeys([layout === 'kana' ? imeOnKey : imeOffKey]);
+    await model.waitForVirtualKeys();
+    setSelectedLayout(layout);
+  };
+  const chooseSymbol = async () => {
+    while (true) {
+      const layout = model.preferences.kana_symbol_layout === 'us' ? 'us' : 'jis';
+      const symbols = kanaSymbolKeys(layout);
+      const index = await choose('記号', [`PCの配列 ${layout.toUpperCase()}`, ...symbols.map(symbol => symbol.label)]);
+      if (index === null) return;
+      if (index > 0) {
+        const { code, modifiers } = symbols[index - 1];
+        model.sendVirtualKeys([{ code, modifiers }]);
+        return;
+      }
+      const selected = await choose('PCの配列', ['JIS', 'US']);
+      if (selected !== null) await model.persist({ kana_symbol_layout: selected === 0 ? 'jis' : 'us' });
+    }
+  };
+  const keysActive = !menu && !dialog && (!model.trackpadPanelEnabled || model.trackpadPanelSize < 100);
   const controls = !model.virtualKeyboardEnabled ? <StudioKeyboard model={model} /> : <View style={{ flex: 1 }}>
+    {!model.editing && <View style={{ flexDirection: 'row', gap: 4, paddingHorizontal: 8 }}>
+      {virtualLayouts.map(([layout, title]) => <Pressable key={layout} accessibilityRole="tab" accessibilityState={{ selected: virtualLayout === layout }}
+        onPress={() => run(() => switchLayout(layout))} style={[styles.button, { flex: 1, minHeight: 36 }, virtualLayout === layout && { backgroundColor: '#24736d' }]}>
+        <Text style={virtualLayout === layout ? styles.text : styles.buttonText}>{title}</Text>
+      </Pressable>)}
+    </View>}
+    {!model.editing && virtualLayout === 'kana' ? <KanaKeyboard key={keysActive ? 'active' : 'paused'} model={model} active={keysActive}
+      onSymbols={() => run(chooseSymbol)} onAlphanumeric={() => run(() => switchLayout('alphanumeric'))} /> :
+      !model.editing && virtualLayout === 'alphanumeric' ? <AlphanumericKeyboard key={keysActive ? 'active' : 'paused'} model={model} active={keysActive}
+        onKana={() => run(() => switchLayout('kana'))} onSymbols={() => run(chooseSymbol)} /> : <View style={{ flex: 1 }}>
     <View style={{ flex: 1, padding: 8 }}>
       {model.editing && <><View style={{ flexDirection: 'row' }}>{[0, 1, 2, 3].map(i => <View style={{ flex: 1, opacity: i === model.editLayer ? 1 : .55 }} key={i}>
         <Button title={`レイヤー ${i}`} onPress={() => { model.editLayer = i; model.changed(); }} /></View>)}</View>
@@ -117,6 +161,7 @@ function Liki() {
     </View>
     {!model.editing && <View pointerEvents="none" style={{ position: 'absolute', top: 12, left: 12, backgroundColor: colors.surface, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
       <Text accessibilityLabel={`現在のレイヤー ${model.layer}${model.syncedLayer !== undefined ? ' ZMK同期中' : ''}`} style={[styles.text, { fontSize: 12, fontWeight: 'bold' }]}>{model.syncedLayer !== undefined ? 'ZMK同期 ' : ''}L{model.layer}{model.oneShotReturn !== undefined ? '・1回' : ''}</Text></View>}
+    </View>}
   </View>;
   const controlScreen = <View style={{ flex: 1 }}>
     {model.relayMode && !model.editing && model.relayEffect !== 'none' && <View pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
@@ -203,13 +248,13 @@ function Liki() {
           {model.isZmkKeyboard && <Button align="left" title="ZMKレイアウトを再取得" onPress={() => action(() => model.call('studioRetry'))} />}</>}
         {model.virtualKeyboardEnabled && <>
           <Section title="レイアウト" />
-          {model.selectedName && <Text style={styles.text}>保存: {model.selectedName}</Text>}
-          <Button align="left" title="レイアウトを選択" onPress={() => action(chooseLayout)} />
-          <Button align="left" title="仮想キーボードの割り当てを編集" onPress={() => { setMenu(false); model.beginEdit(); }} />
-          <Button align="left" title="現在のレイアウトを保存" onPress={() => action(saveLayout)} />
+          {virtualLayout === 'kle' && model.selectedName && <Text style={styles.text}>保存: {model.selectedName}</Text>}
+          <Button align="left" title="KLEレイアウトを選択" onPress={() => action(chooseKleLayout)} />
+          {virtualLayout === 'kle' && <><Button align="left" title="仮想キーボードの割り当てを編集" onPress={() => { setMenu(false); model.beginEdit(); }} />
+            <Button align="left" title="現在のレイアウトを保存" onPress={() => action(saveLayout)} /></>}
           <Button align="left" title="保存したレイアウトを削除" disabled={!model.saved.length} onPress={() => action(deleteLayout)} />
         </>}
-        <Button align="left" title="表示をリセット" onPress={() => action(() => model.resetView())} />
+        {(!model.virtualKeyboardEnabled || virtualLayout === 'kle') && <Button align="left" title="表示をリセット" onPress={() => action(() => model.resetView())} />}
         <Section title="共通" />
         <Button align="left" title="設定" onPress={() => { setMenu(false); model.settingsVisible = true; model.syncPage(); model.changed(); }} />
         <Button align="left" title="PCとの接続を切断" onPress={() => action(() => model.call('disconnect'))} /></ScrollView></SafeAreaView></View>}

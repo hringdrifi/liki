@@ -1,3 +1,5 @@
+import { kanaActionKeys, kanaTaps, variantKana } from './kana-flick.ts';
+import type { KanaVariantAction } from './kana-flick.ts';
 import { StudioClient } from './zmk.ts';
 import { parseRelayRemaps } from './remap.ts';
 import type { RelayRemap } from './remap.ts';
@@ -81,12 +83,18 @@ export class LikiModel {
   layer = 0; editLayer = 0; modifiers = 0; layerKey?: number; oneShotReturn?: number; oneShotKey?: number;
   momentaryPrevious?: number; momentaryKey?: number; momentaryTarget?: number; baseSnapshot?: string; layersSnapshot?: string;
   onError: (e: unknown) => void = () => {};
+  private virtualKeyQueue: Promise<void> = Promise.resolve();
+  private virtualKeyConnection = 0;
+  private lastKana?: string;
+  private kanaEditBoundary = 0;
   constructor(native: Backend) { this.native = native; }
   get displayedLayer() { return this.editing ? this.editLayer : this.layer; }
   flag(key: string) { return this.settings[key] === true; }
   num(key: string) { return Number(this.settings[key] ?? 0); }
   get connected() { return this.status.connected === true; }
   get virtualKeyboardEnabled() { return !this.relayMode || this.preferences.relay_virtual_keyboard === 'true'; }
+  get hasKleLayout() { return !!this.selectedName || typeof this.preferences.kle_json === 'string' || typeof this.preferences.overrides === 'string' ||
+    typeof this.preferences.layer_overrides === 'string'; }
   get syncedLayer(): number | undefined {
     return this.relayMode && this.virtualKeyboardEnabled && this.zmkLayerSupported ? this.studio.activeLayer : undefined;
   }
@@ -184,7 +192,10 @@ export class LikiModel {
     catch { return []; }
   }
   call(method: string, args: Data = {}) { return this.native.invoke(method, args); }
-  send(method: string, args: Data = {}) { void this.call(method, args).catch(this.onError); }
+  send(method: string, args: Data = {}) {
+    if (method === 'click' || method === 'mouseDown') this.forgetLastKana();
+    void this.call(method, args).catch(this.onError);
+  }
   haptic() {
     if (!this.flag('touch_vibration')) return;
     const strength = clamp(Math.trunc(Number(this.settings.touch_vibration_strength ?? 1)), 0, 2);
@@ -245,12 +256,16 @@ export class LikiModel {
       return;
     }
     if (status.relayInput) {
+      this.forgetLastKana();
       this.relayPressed = status.relayInput.pressed; this.relayConsumer = status.relayInput.consumer;
       this.listeners.forEach(fn => fn()); return;
     }
     const keyboardChanged = JSON.stringify(this.status.keyboards ?? []) !== JSON.stringify(status.keyboards ?? []);
     const remapChanged = keyboardChanged && this.isZmkKeyboard;
     if (keyboardChanged) this.isZmkKeyboard = false;
+    if (this.connected && (status.connected !== true || status.address !== this.status.address)) {
+      this.virtualKeyConnection++; this.forgetLastKana();
+    }
     this.status = status;
     if (status.relaySupported === false) { this.relayMode = false; this.relayPressed = []; this.relayConsumer = 0; }
     if (this.connected !== this.showingControls && !status.restoring) { this.showingControls = this.connected; this.settingsVisible = false;
@@ -357,6 +372,38 @@ export class LikiModel {
     }
     this.changed();
   }
+  sendVirtualKeys(keys: { code: number; modifiers: number }[]) {
+    this.lastKana = undefined; // These actions are ordered after any queued kana replacement.
+    this.queueVirtualKeys(keys);
+  }
+  sendKana(character: string) {
+    const keys = kanaTaps(character);
+    if (!this.connected || !keys.length) return;
+    this.lastKana = character;
+    this.queueVirtualKeys(keys);
+  }
+  changeLastKana(variant: KanaVariantAction) {
+    const previous = this.lastKana;
+    if (!this.connected || !previous) return;
+    const next = variantKana(previous, variant);
+    if (next === previous) return;
+    this.lastKana = next;
+    this.queueVirtualKeys([{ code: kanaActionKeys.削除, modifiers: 0 }, ...kanaTaps(next)], this.kanaEditBoundary);
+    return `${previous} → ${next}`;
+  }
+  forgetLastKana() { this.lastKana = undefined; this.kanaEditBoundary++; }
+  private queueVirtualKeys(keys: { code: number; modifiers: number }[], editBoundary?: number) {
+    if (!this.connected || !keys.length) return;
+    const connection = this.virtualKeyConnection;
+    this.virtualKeyQueue = this.virtualKeyQueue.then(async () => {
+      if (editBoundary !== undefined && editBoundary !== this.kanaEditBoundary) return;
+      for (const key of keys) {
+        if (connection !== this.virtualKeyConnection) return;
+        await this.call('key', key);
+      }
+    }).catch(error => { this.forgetLastKana(); this.onError(error); });
+  }
+  waitForVirtualKeys() { return this.virtualKeyQueue; }
   beginEdit() { this.baseSnapshot = JSON.stringify(this.overrides); this.layersSnapshot = JSON.stringify(this.layers); this.editLayer = this.layer <= 3 ? this.layer : 0; this.editing = true; this.syncPage(); this.changed(); }
   async endEdit(save: boolean) {
     if (save) await this.persist({ overrides: JSON.stringify(this.overrides), layer_overrides: JSON.stringify(this.layers) });
@@ -400,5 +447,5 @@ export class LikiModel {
     if (this.selectedName?.toLowerCase() === name.toLowerCase()) { values.selected_saved_layout_name = null; this.selectedName = undefined; }
     await this.persist(values); this.changed();
   }
-  dispose() { this.subscription?.remove(); this.listeners.clear(); this.studio.reset(); }
+  dispose() { this.virtualKeyConnection++; this.forgetLastKana(); this.subscription?.remove(); this.listeners.clear(); this.studio.reset(); }
 }

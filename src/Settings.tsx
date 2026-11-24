@@ -79,17 +79,16 @@ export function Settings({ model: m, onBack, onPrivacy, choose, prompt, run }: {
     {toggle('pinch_zoom', 'ピンチで拡大縮小', '2本指でキーボードの表示倍率を変更')}
     {toggle('drag_move_keyboard', 'ドラッグでキーボードを移動', '通常キーの上を1本指で動かして表示位置を変更')}
     <Section title="トラックパッド" />
-    <Text style={styles.subsection}>領域</Text>
-    <View style={{ paddingVertical: 8, flexDirection: 'row', alignItems: 'center' }}><Text style={[styles.text, { flex: 1, fontSize: 16 }]}>独立したトラックパッド領域</Text>
-      <Switch accessibilityLabel="独立したトラックパッド領域" value={m.trackpadPanelEnabled}
+    <View style={{ paddingVertical: 8, flexDirection: 'row', alignItems: 'center' }}><Text style={[styles.text, { flex: 1, fontSize: 16 }]}>トラックパッドを有効にする</Text>
+      <Switch accessibilityLabel="トラックパッドを有効にする" value={m.trackpadPanelEnabled}
         onValueChange={value => run(() => m.setTrackpadPanelEnabled(value))} trackColor={{ true: colors.accent }} /></View>
     <Button title={`トラックパッドの位置: ${{ bottom: '下', top: '上', left: '左', right: '右' }[m.trackpadPanelPosition]}`} onPress={() => run(async () => {
       const positions = ['bottom', 'top', 'left', 'right'] as const;
       const index = await choose('トラックパッドの位置', ['下', '上', '左', '右']);
       if (index !== null) await m.setTrackpadPanelPosition(positions[index]);
     })} />
-    <View style={{ paddingVertical: 8 }}><Text style={styles.text}>トラックパッド領域の大きさ: {m.trackpadPanelSize}%</Text>
-      <Slider accessibilityLabel="トラックパッド領域の大きさ" minimumValue={TRACKPAD_PANEL_MIN_PERCENT} maximumValue={TRACKPAD_PANEL_MAX_PERCENT}
+    <View style={{ paddingVertical: 8 }}><Text style={styles.text}>トラックパッドの大きさ: {m.trackpadPanelSize}%</Text>
+      <Slider accessibilityLabel="トラックパッドの大きさ" minimumValue={TRACKPAD_PANEL_MIN_PERCENT} maximumValue={TRACKPAD_PANEL_MAX_PERCENT}
         step={1} value={m.trackpadPanelSize} minimumTrackTintColor={colors.accent} onValueChange={value => run(() => m.setTrackpadPanelSize(value))} /></View>
     <Text style={styles.subsection}>ポインター</Text>
     {slider('pointer_speed', 'ポインターの速度', .5, 3, '倍')}

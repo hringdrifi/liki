@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { LikiModel, Geometry, rotate } from '../src/model.ts';
 import type { Backend, Binding, Data, KeyShape, Point } from '../src/model.ts';
 import { KeyboardGesture, TrackpadGesture } from '../src/gestures.ts';
+import { directions, flickDirection, imeOffKey, imeOnKey, kanaActionKeys, kanaRows, kanaSymbolKeys, kanaTaps, variantKana } from '../src/kana-flick.ts';
 
 const binding = (name: string, code = 0, modifier = 0, action = 'NONE', layer = 0, consumer = 0): Binding => ({ name, code, modifier, action, layer, consumer });
 const shape = (index: number, ghost = false): KeyShape => ({ index, x: index, y: 0, w: 1, h: 1, x2: 0, y2: 0, w2: 1, h2: 1,
@@ -35,6 +36,110 @@ async function fixture() {
   const sent = (method: string) => calls.filter(c => c.method === method).map(c => c.args);
   return { m, calls, sent, preferences };
 }
+
+test('kana flick selects the Japanese direction and maps kana to HID taps', () => {
+  assert.deepEqual(kanaRows.map(row => row.length), [5, 5, 5, 5]);
+  assert.deepEqual(kanaRows.map(row => row[0]), ['取消', '左', '記号', '英数']);
+  assert.deepEqual(kanaRows.map(row => row.slice(1, 4).map(key => key?.[0]).join('')), ['あかさ', 'たなは', 'まやら', '゛わ、']);
+  assert.deepEqual(kanaRows.map(row => kanaActionKeys[row[4]!]), [0x2a, 0x4f, 0x2c, 0x28]);
+  assert.equal(kanaActionKeys[kanaRows[0][0]], 0x29);
+  assert.equal(kanaActionKeys[kanaRows[1][0]!], 0x50);
+  const key = Array.from(kanaRows[0][2]!);
+  const motions = [[1, 1], [-20, 2], [2, -20], [20, 2], [2, 20]] as const;
+  assert.equal(motions.map(([x, y]) => key[directions.indexOf(flickDirection(x, y))]).join(''), 'かきくけこ');
+  assert.equal(variantKana('く', 'voiced'), 'ぐ');
+  assert.equal(variantKana('は', 'semiVoiced'), 'ぱ');
+  assert.equal(variantKana('つ', 'small'), 'っ');
+  assert.equal(variantKana('が', 'voiced'), 'か');
+  assert.equal(variantKana('ば', 'semiVoiced'), 'ぱ');
+  assert.equal(variantKana('か', 'small'), 'か');
+  assert.deepEqual(Array.from('かがはばぱつづっやゃな', kana => variantKana(kana, 'cycle')), Array.from('がかばぱはづっつゃやな'));
+  for (const row of kanaRows) for (const key of row) {
+    if (!['゛゜小', '記号', '英数'].includes(key) && !Object.hasOwn(kanaActionKeys, key)) {
+      for (const kana of key.trim()) if (kana !== ' ') assert.ok(kanaTaps(kana).length, kana);
+    }
+  }
+  assert.deepEqual(kanaTaps('ぐ'), [{ code: 10, modifiers: 0 }, { code: 24, modifiers: 0 }]);
+  assert.deepEqual(kanaTaps('！'), [{ code: 0x1e, modifiers: 2 }]);
+});
+
+test('the virtual keyboard symbol palette uses the selected PC keyboard layout', () => {
+  const jis = kanaSymbolKeys('jis'), us = kanaSymbolKeys('us');
+  assert.deepEqual(jis.map(key => key.label), us.map(key => key.label));
+  assert.deepEqual(jis.find(key => key.label === '['), { label: '[', code: 0x30, modifiers: 0 });
+  assert.deepEqual(us.find(key => key.label === '['), { label: '[', code: 0x2f, modifiers: 0 });
+  assert.deepEqual(jis.find(key => key.label === '('), { label: '(', code: 0x25, modifiers: 2 });
+  assert.deepEqual(us.find(key => key.label === '('), { label: '(', code: 0x26, modifiers: 2 });
+  assert.deepEqual(jis.find(key => key.label === '!'), { label: '!', code: 0x1e, modifiers: 2 });
+  assert.deepEqual(us.find(key => key.label === '?'), { label: '?', code: 0x38, modifiers: 2 });
+});
+
+test('kana taps send in order and pending taps do not survive reconnecting', async () => {
+  const { m, sent } = await fixture();
+  m.acceptStatus({ connected: true, address: 'PC' });
+  m.sendVirtualKeys([imeOnKey]);
+  m.sendVirtualKeys(kanaTaps('か'));
+  m.sendVirtualKeys([{ code: 0x2c, modifiers: 0 }, { code: 0x28, modifiers: 0 }]);
+  m.sendVirtualKeys([imeOffKey]);
+  await m.waitForVirtualKeys();
+  assert.deepEqual(sent('key').map(key => key.code), [0x90, 14, 4, 0x2c, 0x28, 0x91]);
+  m.sendVirtualKeys(kanaTaps('き'));
+  await Promise.resolve();
+  m.acceptStatus({ connected: false });
+  m.acceptStatus({ connected: true, address: 'PC' });
+  m.sendVirtualKeys(kanaTaps('う'));
+  await m.waitForVirtualKeys();
+  assert.deepEqual(sent('key').slice(6).map(key => key.code), [14, 24]);
+});
+
+test('kana variants replace the last unconverted kana before sending a conversion key', async () => {
+  const { m, sent } = await fixture();
+  m.acceptStatus({ connected: true, address: 'PC' });
+  assert.equal(m.changeLastKana('voiced'), undefined);
+  m.sendKana('か');
+  assert.equal(m.changeLastKana('voiced'), 'か → が');
+  m.sendVirtualKeys([{ code: kanaActionKeys.変換, modifiers: 0 }]);
+  assert.equal(m.changeLastKana('voiced'), undefined);
+  await m.waitForVirtualKeys();
+  assert.deepEqual(sent('key').map(key => key.code), [14, 4, 0x2a, 10, 4, 0x2c]);
+});
+
+test('repeated taps on the kana variant key cycle through all forms before transmission finishes', async () => {
+  const { m, sent } = await fixture();
+  m.acceptStatus({ connected: true, address: 'PC' });
+  m.sendKana('は');
+  assert.equal(m.changeLastKana('cycle'), 'は → ば');
+  assert.equal(m.changeLastKana('cycle'), 'ば → ぱ');
+  assert.equal(m.changeLastKana('cycle'), 'ぱ → は');
+  await m.waitForVirtualKeys();
+  assert.deepEqual(sent('key').map(key => key.code), [11, 4, 0x2a, 5, 4, 0x2a, 19, 4, 0x2a, 11, 4]);
+});
+
+test('kana replacement does not erase a character after the trackpad or relay changes the input', async () => {
+  const { m, sent } = await fixture();
+  m.acceptStatus({ connected: true, address: 'PC' });
+  m.sendKana('は');
+  assert.equal(m.changeLastKana('semiVoiced'), 'は → ぱ');
+  m.click(1);
+  assert.equal(m.changeLastKana('voiced'), undefined);
+  await m.waitForVirtualKeys();
+  m.sendKana('つ');
+  m.acceptStatus({ relayInput: { pressed: [4], consumer: 0 } });
+  assert.equal(m.changeLastKana('small'), undefined);
+  await m.waitForVirtualKeys();
+  assert.deepEqual(sent('key').map(key => key.code), [11, 4, 23, 24]);
+});
+
+test('built-in mobile layouts leave the KLE availability tied to user layout data', async () => {
+  const { m } = await fixture();
+  assert.equal(m.hasKleLayout, false);
+  await m.saveLayout('Saved default');
+  assert.equal(m.hasKleLayout, true);
+  await m.applyLayout('custom');
+  assert.equal(m.hasKleLayout, true);
+  await m.persist({ kle_json: null, overrides: '{}', layer_overrides: null });
+  assert.equal(m.hasKleLayout, true);
+});
 
 test('sticky modifiers combine, send with a key and clear', async () => {
   const { m, sent } = await fixture(); m.overrides[0] = 'Ctrl'; await m.tap(m.keys[0]);
